@@ -24,22 +24,36 @@ class YouTubeService {
     }
   }
 
-  // 최고 음질의 오디오 스트림 URL 추출
-  Future<String?> getAudioStreamUrl(String videoId) async {
+  // 오디오 스트림 URL 여러 개(Fallback 용) 추출
+  Future<List<String>> getAudioStreamUrls(String videoId) async {
     try {
       var manifest = await _yt.videos.streamsClient.getManifest(videoId);
+      List<String> urls = [];
       
-      // iOS AVPlayer는 DASH(Fragmented MP4/WebM) 오디오 스트림을 기본 지원하지 않아 Cannot Open 에러가 발생합니다.
-      // 이를 완벽히 해결하기 위해 네이티브 호환성이 있는 Progressive 방식인 Muxed(비디오+오디오) 스트림을 사용합니다.
+      // 1순위: iOS AVPlayer 네이티브 호환성이 가장 높은 Progressive 방식(Muxed) 스트림
       var muxedStreams = manifest.muxed.where((stream) => stream.container.name == 'mp4').toList();
-      if (muxedStreams.isEmpty) return null;
+      if (muxedStreams.isNotEmpty) {
+        urls.add(muxedStreams.first.url.toString()); // 통상 360p
+        if (muxedStreams.length > 1) {
+          urls.add(muxedStreams.last.url.toString()); // 다른 해상도의 Muxed
+        }
+      }
       
-      // 데이터 절약 및 안정적 버퍼링을 위해 제일 낮은 화질(통상 360p)의 mp4를 선택합니다.
-      var streamInfo = muxedStreams.first;
-      return streamInfo.url.toString();
+      // 2순위: mp4 컨테이너의 오디오 전용 스트림
+      var audioMp4 = manifest.audioOnly.where((stream) => stream.container.name == 'mp4').toList();
+      if (audioMp4.isNotEmpty) {
+        urls.add(audioMp4.withHighestBitrate().url.toString());
+      }
+      
+      // 3순위: 그 외 전체 오디오 (webm 포함)
+      if (manifest.audioOnly.isNotEmpty) {
+        urls.add(manifest.audioOnly.withHighestBitrate().url.toString());
+      }
+
+      return urls;
     } catch (e) {
-      print('Error getting audio stream: $e');
-      return null;
+      print('Error getting audio stream urls: $e');
+      return [];
     }
   }
 

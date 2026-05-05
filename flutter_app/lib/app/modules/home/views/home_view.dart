@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 import '../controllers/home_controller.dart';
 import '../../player/controllers/player_controller.dart';
 import 'dart:ui';
@@ -36,8 +37,9 @@ class HomeView extends StatelessWidget {
                   actions: [
                     IconButton(icon: const Icon(Icons.search), onPressed: () => Get.toNamed('/search')),
                     const CircleAvatar(
-                      radius: 16,
-                      backgroundImage: NetworkImage('https://via.placeholder.com/150'),
+                      radius: 20,
+                      backgroundColor: Colors.grey,
+                      child: Icon(Icons.person, color: Colors.white),
                     ),
                     const SizedBox(width: 16),
                   ],
@@ -80,6 +82,21 @@ class HomeView extends StatelessWidget {
               )
             : const SizedBox.shrink()
           ),
+          
+          // WebView Fallback Player (숨겨짐)
+          Obx(() {
+            if (playerController.useWebViewFallback.value && playerController.ytWebController != null) {
+              return Positioned(
+                bottom: -100, right: -100,
+                width: 10, height: 10,
+                child: Opacity(
+                  opacity: 0.01,
+                  child: YoutubePlayer(controller: playerController.ytWebController!),
+                ),
+              );
+            }
+            return const SizedBox.shrink();
+          }),
         ],
       ),
       bottomNavigationBar: BottomNavigationBar(

@@ -75,10 +75,14 @@ class PlayerView extends GetView<PlayerController> {
                             thumbColor: Colors.white,
                           ),
                           child: Slider(
-                            value: controller.position.value.inSeconds.toDouble().clamp(0.0, controller.duration.value.inSeconds.toDouble()),
+                            value: controller.position.value.inSeconds.toDouble().clamp(0.0, controller.duration.value.inSeconds.toDouble() > 0 ? controller.duration.value.inSeconds.toDouble() : 1.0),
                             max: controller.duration.value.inSeconds.toDouble() > 0 ? controller.duration.value.inSeconds.toDouble() : 1.0,
                             onChanged: (val) {
-                              controller.audioPlayer.seek(Duration(seconds: val.toInt()));
+                              if (controller.useWebViewFallback.value && controller.ytWebController != null) {
+                                controller.ytWebController!.seekTo(seconds: val, allowSeekAhead: true);
+                              } else {
+                                controller.audioPlayer.seek(Duration(seconds: val.toInt()));
+                              }
                             },
                           ),
                         ),

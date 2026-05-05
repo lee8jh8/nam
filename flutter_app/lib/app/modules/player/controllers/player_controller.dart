@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:get/get.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
+import 'package:youtube_player_iframe/youtube_player_iframe.dart' as yt_iframe;
 import '../../../data/services/youtube_service.dart';
 import '../../home/controllers/home_controller.dart';
 
@@ -9,6 +11,9 @@ class PlayerController extends GetxController {
   final AudioPlayer audioPlayer = AudioPlayer();
   final YouTubeService _ytService = YouTubeService();
   
+  yt_iframe.YoutubePlayerController? ytWebController;
+  var useWebViewFallback = false.obs;
+
   var isPlaying = false.obs;
   var currentVideo = Rxn<Video>();
   var duration = Duration.zero.obs;
@@ -45,23 +50,85 @@ class PlayerController extends GetxController {
     }
   }
 
+  void _initWebViewFallback(String videoId) {
+    useWebViewFallback.value = true;
+    if (ytWebController == null) {
+      ytWebController = yt_iframe.YoutubePlayerController.fromVideoId(
+        videoId: videoId,
+        autoPlay: true,
+        params: const yt_iframe.YoutubePlayerParams(
+          showControls: false,
+          mute: false,
+          showFullscreenButton: false,
+          loop: false,
+          playsInline: true,
+        ),
+      );
+      
+      ytWebController!.listen((event) {
+        if (event.playerState == yt_iframe.PlayerState.playing) {
+          isPlaying.value = true;
+        } else if (event.playerState == yt_iframe.PlayerState.paused) {
+          isPlaying.value = false;
+        } else if (event.playerState == yt_iframe.PlayerState.ended) {
+          playNext();
+        }
+        duration.value = event.metaData.duration;
+      });
+      
+      Stream.periodic(const Duration(seconds: 1)).listen((_) async {
+        if (useWebViewFallback.value && isPlaying.value && ytWebController != null) {
+          final pos = await ytWebController!.currentTime;
+          position.value = Duration(seconds: pos.toInt());
+        }
+      });
+    } else {
+      ytWebController!.loadVideoById(videoId: videoId);
+    }
+  }
+
   Future<void> playVideo(Video video) async {
     isLoading.value = true;
     currentVideo.value = video;
     
-    final url = await _ytService.getAudioStreamUrl(video.id.value);
-    if (url != null) {
+    final urls = await _ytService.getAudioStreamUrls(video.id.value);
+    bool success = false;
+    
+    for (String url in urls) {
       try {
+        // 시도 1: User-Agent 주입 (차단 우회)
         await audioPlayer.setAudioSource(AudioSource.uri(
           Uri.parse(url),
           headers: {'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1'},
         ));
         audioPlayer.play();
         _addToRecentlyPlayed(video);
+        success = true;
+        break; // 성공 시 루프 탈출
       } catch (e) {
-        print('Playback error: $e');
+        print('Playback error with headers: $e');
+        // 시도 2: 헤더 제거 (AVPlayer 자체 처리 유도)
+        try {
+          await audioPlayer.setAudioSource(AudioSource.uri(Uri.parse(url)));
+          audioPlayer.play();
+          _addToRecentlyPlayed(video);
+          success = true;
+          break; // 성공 시 루프 탈출
+        } catch (e2) {
+          print('Playback error without headers: $e2');
+          // 다음 Fallback URL로 넘어감
+        }
       }
     }
+
+    if (!success) {
+      print('Native Stream 시도 실패. 숨겨진 WebView Player(Fallback)로 전환합니다.');
+      _initWebViewFallback(video.id.value);
+      _addToRecentlyPlayed(video);
+      success = true;
+      audioPlayer.stop(); // just_audio 중단
+    }
+    
     isLoading.value = false;
   }
 
@@ -86,6 +153,15 @@ class PlayerController extends GetxController {
   }
 
   void togglePlay() {
+    if (useWebViewFallback.value && ytWebController != null) {
+      if (isPlaying.value) {
+        ytWebController!.pauseVideo();
+      } else {
+        ytWebController!.playVideo();
+      }
+      return;
+    }
+
     if (audioPlayer.playing) {
       audioPlayer.pause();
     } else {
