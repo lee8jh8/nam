@@ -25,8 +25,8 @@ class HomeController extends GetxController {
   void fetchTrending() async {
     isLoading.value = true;
     try {
-      // 최신 인기곡 목업 검색 (실제 차트 API 연동 전 임시)
-      var results = await _ytService.searchSongs("top hits kpop official audio");
+      // 실제 유튜브의 최신 인기 음악을 검색해서 가져옴 (모음집 제외 필터링 적용됨)
+      var results = await _ytService.getTrendingMusic();
       
       // 제목 정제(Parsing) 로직: [MV], (Official Video) 등 제거
       var cleanedResults = results.toList();

@@ -35,11 +35,9 @@ class HomeView extends StatelessWidget {
                   backgroundColor: Colors.transparent,
                   title: Text('app_name'.tr, style: const TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1.5)),
                   actions: [
-                    IconButton(icon: const Icon(Icons.search), onPressed: () => Get.toNamed('/search')),
-                    const CircleAvatar(
-                      radius: 20,
-                      backgroundColor: Colors.grey,
-                      child: Icon(Icons.person, color: Colors.white),
+                    IconButton(
+                      icon: const Icon(Icons.settings, color: Colors.white, size: 28),
+                      onPressed: () => Get.toNamed('/settings'),
                     ),
                     const SizedBox(width: 16),
                   ],
@@ -73,14 +71,14 @@ class HomeView extends StatelessWidget {
             ),
           ),
           // Mini Player
-          Obx(() => playerController.currentVideo.value != null 
-            ? Positioned(
-                bottom: 16,
-                left: 16,
-                right: 16,
-                child: _buildMiniPlayer(),
-              )
-            : const SizedBox.shrink()
+          Obx(() => Positioned(
+              bottom: 16,
+              left: 16,
+              right: 16,
+              child: playerController.currentVideo.value != null 
+                ? _buildMiniPlayer() 
+                : _buildSkeletonMiniPlayer(),
+            )
           ),
           
           // WebView Fallback Player (숨겨짐)
@@ -197,9 +195,9 @@ class HomeView extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(cleanTitle, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+                      Text(video.parsedSongName, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
                       const SizedBox(height: 4),
-                      Text(video.author, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                      Text(video.parsedArtist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey, fontSize: 12)),
                     ],
                   ),
                 ),
@@ -211,9 +209,63 @@ class HomeView extends StatelessWidget {
     );
   }
 
+  Widget _buildSkeletonMiniPlayer() {
+    return GestureDetector(
+      onTap: () {
+        Get.toNamed('/search');
+      },
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+          child: Container(
+            height: 64,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.05),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: Colors.white.withOpacity(0.1), width: 0.5),
+            ),
+            child: Row(
+              children: [
+                const SizedBox(width: 8),
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(Icons.music_note, color: Colors.white54),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(width: 120, height: 14, color: Colors.white.withOpacity(0.1)),
+                      const SizedBox(height: 6),
+                      Container(width: 80, height: 10, color: Colors.white.withOpacity(0.05)),
+                    ],
+                  ),
+                ),
+                IconButton(icon: const Icon(Icons.play_arrow, color: Colors.white54), onPressed: () {
+                  Get.toNamed('/search');
+                }),
+                IconButton(icon: const Icon(Icons.skip_next, color: Colors.white54), onPressed: () {
+                  Get.toNamed('/search');
+                }),
+                const SizedBox(width: 8),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildMiniPlayer() {
     final video = playerController.currentVideo.value!;
-    final cleanTitle = controller.parseTitle(video.title);
 
     return GestureDetector(
       onTap: () {
@@ -235,7 +287,36 @@ class HomeView extends StatelessWidget {
                 const SizedBox(width: 8),
                 ClipRRect(
                   borderRadius: BorderRadius.circular(8),
-                  child: Image.network(video.thumbnails.lowResUrl, width: 48, height: 48, fit: BoxFit.cover),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Image.network(video.thumbnails.lowResUrl, width: 48, height: 48, fit: BoxFit.cover),
+                      Obx(() {
+                        if (playerController.isLoading.value) {
+                          return Container(
+                            width: 48,
+                            height: 48,
+                            color: Colors.black54,
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                const SizedBox(
+                                  width: 16, height: 16,
+                                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)
+                                ),
+                                const SizedBox(height: 2),
+                                Text(
+                                  '${playerController.loadingPercent.value}%', 
+                                  style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold)
+                                ),
+                              ],
+                            ),
+                          );
+                        }
+                        return const SizedBox.shrink();
+                      }),
+                    ],
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -243,20 +324,20 @@ class HomeView extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(cleanTitle, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                      Text(video.author, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                      Text(video.parsedSongName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      Text(video.parsedArtist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey, fontSize: 12)),
                     ],
                   ),
                 ),
-                Obx(() => playerController.isLoading.value 
-                  ? const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 16),
-                      child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
-                    )
-                  : IconButton(
-                      icon: Icon(playerController.isPlaying.value ? Icons.pause : Icons.play_arrow, color: Colors.white),
-                      onPressed: playerController.togglePlay,
-                    )
+                Obx(() => IconButton(
+                    icon: Icon(
+                      playerController.isLoading.value 
+                        ? Icons.pause 
+                        : (playerController.isPlaying.value ? Icons.pause : Icons.play_arrow), 
+                      color: Colors.white
+                    ),
+                    onPressed: playerController.togglePlay,
+                  )
                 ),
                 IconButton(icon: const Icon(Icons.skip_next, color: Colors.white), onPressed: playerController.playNext),
                 const SizedBox(width: 8),

@@ -11,7 +11,9 @@ class SearchView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
+    return GestureDetector(
+      onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+      child: Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFF0D0D0D),
         title: TextField(
@@ -34,6 +36,7 @@ class SearchView extends StatelessWidget {
 
         if (controller.searchResults.isEmpty && controller.recentSearches.isNotEmpty) {
           return ListView.builder(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             itemCount: controller.recentSearches.length,
             itemBuilder: (context, index) {
               final term = controller.recentSearches[index];
@@ -50,6 +53,7 @@ class SearchView extends StatelessWidget {
         }
 
         return ListView.builder(
+          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
           itemCount: controller.searchResults.length,
           itemBuilder: (context, index) {
             final video = controller.searchResults[index];
@@ -81,6 +85,7 @@ class SearchView extends StatelessWidget {
           BottomNavigationBarItem(icon: const Icon(Icons.search), label: 'search'.tr),
           BottomNavigationBarItem(icon: const Icon(Icons.library_music), label: 'library'.tr),
         ],
+      ),
       ),
     );
   }

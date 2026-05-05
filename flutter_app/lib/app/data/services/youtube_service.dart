@@ -9,6 +9,18 @@ class YouTubeService {
     return searchResults.toList();
   }
 
+  // 최신 인기곡 가져오기 (10분 이하 공식 오디오/MV만 필터링)
+  Future<List<Video>> getTrendingMusic() async {
+    try {
+      // 플레이리스트를 쓰면 종종 변동이 잦으므로, 유튜브의 음악 차트/인기 검색어를 활용합니다.
+      var searchResults = await _yt.search.search('인기 급상승 음악 Kpop Official MV');
+      // 재생 시간이 10분 미만인 것만 필터링 (모음집 방지)
+      return searchResults.where((v) => v.duration != null && v.duration!.inMinutes < 10).toList();
+    } catch (e) {
+      return [];
+    }
+  }
+
   // 비디오 상세 정보 가져오기
   Future<Video> getVideoDetails(String videoId) async {
     return await _yt.videos.get(videoId);

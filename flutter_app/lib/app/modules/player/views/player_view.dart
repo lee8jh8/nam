@@ -10,8 +10,20 @@ class PlayerView extends GetView<PlayerController> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.transparent,
-      body: Obx(() {
-        final video = controller.currentVideo.value;
+      body: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onVerticalDragEnd: (details) {
+          if (details.primaryVelocity != null && details.primaryVelocity! > 200) {
+            Get.back();
+          }
+        },
+        onVerticalDragUpdate: (details) {
+          if (details.primaryDelta != null && details.primaryDelta! > 15) {
+            Get.back();
+          }
+        },
+        child: Obx(() {
+          final video = controller.currentVideo.value;
         if (video == null) return const Center(child: Text('No media'));
         
         return Stack(
@@ -43,7 +55,26 @@ class PlayerView extends GetView<PlayerController> {
                     padding: const EdgeInsets.symmetric(horizontal: 32),
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(24),
-                      child: Image.network(video.thumbnails.highResUrl, width: double.infinity, height: 320, fit: BoxFit.cover),
+                      child: Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Image.network(video.thumbnails.highResUrl, width: double.infinity, height: 320, fit: BoxFit.cover),
+                          if (controller.isLoading.value)
+                            Container(
+                              width: double.infinity,
+                              height: 320,
+                              color: Colors.black54,
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  const CircularProgressIndicator(color: Colors.white),
+                                  const SizedBox(height: 16),
+                                  Text('${controller.loadingPercent.value}%', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                                ],
+                              ),
+                            ),
+                        ],
+                      ),
                     ),
                   ),
                   const SizedBox(height: 48),
@@ -53,9 +84,9 @@ class PlayerView extends GetView<PlayerController> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(video.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                        Text(video.parsedSongName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
                         const SizedBox(height: 8),
-                        Text(video.author, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey, fontSize: 18)),
+                        Text(video.parsedArtist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey, fontSize: 18)),
                       ],
                     ),
                   ),
@@ -104,13 +135,19 @@ class PlayerView extends GetView<PlayerController> {
                   Row(
                     mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                     children: [
-                      IconButton(icon: const Icon(Icons.skip_previous, color: Colors.white, size: 40), onPressed: () {}), // 이전곡 로직 추후 구현
-                      controller.isLoading.value 
-                        ? const SizedBox(width: 80, height: 80, child: Center(child: CircularProgressIndicator(color: Colors.white)))
-                        : IconButton(
-                            icon: Icon(controller.isPlaying.value ? Icons.pause_circle_filled : Icons.play_circle_fill, color: Colors.white, size: 80),
-                            onPressed: controller.togglePlay,
-                          ),
+                      IconButton(icon: const Icon(Icons.skip_previous, color: Colors.white, size: 40), onPressed: controller.playPrevious),
+                      IconButton(
+                        iconSize: 80,
+                        padding: EdgeInsets.zero,
+                        icon: Icon(
+                          controller.isLoading.value 
+                            ? Icons.pause_circle_filled 
+                            : (controller.isPlaying.value ? Icons.pause_circle_filled : Icons.play_circle_fill), 
+                          color: Colors.white,
+                          size: 80,
+                        ),
+                        onPressed: controller.togglePlay,
+                      ),
                       IconButton(icon: const Icon(Icons.skip_next, color: Colors.white, size: 40), onPressed: controller.playNext),
                     ],
                   ),
@@ -121,6 +158,7 @@ class PlayerView extends GetView<PlayerController> {
           ],
         );
       }),
+      ),
     );
   }
 
