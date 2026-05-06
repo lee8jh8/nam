@@ -11,7 +11,7 @@ class LibraryView extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFF0D0D0D),
-        title: const Text('보관함', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+        title: const Text('재생목록', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
         actions: [
           ValueListenableBuilder(
             valueListenable: Hive.box('playlists').listenable(),

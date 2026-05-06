@@ -26,207 +26,250 @@ class PlayerView extends GetView<PlayerController> {
         },
         child: Obx(() {
           final video = controller.currentVideo.value;
-        if (video == null) return const Center(child: Text('No media'));
-        
-        return Stack(
-          children: [
-            // Background blur (앨범 아트 기반 글래스모피즘 효과)
-            Positioned.fill(
-              child: Image.network(video.thumbnails.highResUrl, fit: BoxFit.cover),
-            ),
-            Positioned.fill(
-              child: BackdropFilter(
-                filter: ImageFilter.blur(sigmaX: 50, sigmaY: 50),
-                child: Container(color: Colors.black.withOpacity(0.6)),
+          if (video == null) return const Center(child: Text('No media'));
+
+          return Stack(
+            children: [
+              // 배경 블러 (앨범아트 기반)
+              Positioned.fill(
+                child: Image.network(video.thumbnails.highResUrl, fit: BoxFit.cover),
               ),
-            ),
-            SafeArea(
-              child: Column(
-                children: [
-                  // 상단 앱바
-                  AppBar(
-                    backgroundColor: Colors.transparent,
-                    elevation: 0,
-                    leading: IconButton(icon: const Icon(Icons.keyboard_arrow_down, color: Colors.white, size: 32), onPressed: () => Get.back()),
-                    title: const Text('Now Playing', style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 2.0)),
-                    centerTitle: true,
-                  ),
-                  const Spacer(),
-                  // 중앙 앨범 썸네일
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 32),
-                    child: ClipRRect(
-                      borderRadius: BorderRadius.circular(24),
-                      child: Stack(
-                        alignment: Alignment.center,
-                        children: [
-                          Image.network(video.thumbnails.highResUrl, width: double.infinity, height: 320, fit: BoxFit.cover),
-                          if (controller.isLoading.value)
-                            Container(
-                              width: double.infinity,
-                              height: 320,
-                              color: Colors.black54,
+              Positioned.fill(
+                child: BackdropFilter(
+                  filter: ImageFilter.blur(sigmaX: 50, sigmaY: 50),
+                  child: Container(color: Colors.black.withOpacity(0.6)),
+                ),
+              ),
+              // 메인 콘텐츠
+              SafeArea(
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      // 상단 앱바
+                      AppBar(
+                        backgroundColor: Colors.transparent,
+                        elevation: 0,
+                        leading: IconButton(
+                          icon: const Icon(Icons.keyboard_arrow_down, color: Colors.white, size: 32),
+                          onPressed: () => Get.back(),
+                        ),
+                        title: const Text(
+                          'Now Playing',
+                          style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold, letterSpacing: 2.0),
+                        ),
+                        centerTitle: true,
+                      ),
+                      const SizedBox(height: 20),
+                      // 앨범 썸네일
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 32),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(24),
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              Image.network(
+                                video.thumbnails.highResUrl,
+                                width: double.infinity,
+                                height: 300,
+                                fit: BoxFit.cover,
+                              ),
+                              if (controller.isLoading.value)
+                                Container(
+                                  width: double.infinity,
+                                  height: 300,
+                                  color: Colors.black54,
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      const CircularProgressIndicator(color: Colors.white),
+                                      const SizedBox(height: 16),
+                                      Text(
+                                        '${controller.loadingPercent.value}%',
+                                        style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      // 재생 모드 배지
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 32),
+                        child: Align(
+                          alignment: Alignment.centerLeft,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: controller.isPlaylistMode.value
+                                  ? const Color(0xFF1DB954).withOpacity(0.25)
+                                  : Colors.white.withOpacity(0.08),
+                              borderRadius: BorderRadius.circular(6),
+                            ),
+                            child: Text(
+                              controller.playbackMode.value,
+                              style: TextStyle(
+                                color: controller.isPlaylistMode.value ? const Color(0xFF1DB954) : Colors.grey,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      // 곡 제목 및 아티스트 + 재생목록 추가 버튼
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        child: Row(
+                          children: [
+                            Expanded(
                               child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  const CircularProgressIndicator(color: Colors.white),
-                                  const SizedBox(height: 16),
-                                  Text('${controller.loadingPercent.value}%', style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                                  Text(
+                                    video.parsedSongName,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold),
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    video.parsedArtist,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: const TextStyle(color: Colors.grey, fontSize: 18),
+                                  ),
                                 ],
                               ),
                             ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 48),
-                  // 재생 모드 배지
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 32),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: controller.isPlaylistMode.value
-                            ? const Color(0xFF1DB954).withOpacity(0.25)
-                            : Colors.white.withOpacity(0.08),
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          controller.playbackMode.value,
-                          style: TextStyle(
-                            color: controller.isPlaylistMode.value ? const Color(0xFF1DB954) : Colors.grey,
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                          ),
+                            IconButton(
+                              icon: const Icon(Icons.playlist_add, color: Colors.white70, size: 32),
+                              onPressed: () => _showAddToPlaylistBottomSheet(context, video),
+                            ),
+                          ],
                         ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  // 곡 제목 및 아티스트
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(video.parsedSongName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 8),
-                              Text(video.parsedArtist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey, fontSize: 18)),
-                            ],
-                          ),
+                      const SizedBox(height: 24),
+                      // 진행바
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 24),
+                        child: Column(
+                          children: [
+                            SliderTheme(
+                              data: SliderTheme.of(context).copyWith(
+                                trackHeight: 4,
+                                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
+                                overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
+                                activeTrackColor: Colors.white,
+                                inactiveTrackColor: Colors.white.withOpacity(0.3),
+                                thumbColor: Colors.white,
+                              ),
+                              child: Slider(
+                                value: controller.position.value.inSeconds.toDouble().clamp(
+                                  0.0,
+                                  controller.duration.value.inSeconds.toDouble() > 0
+                                      ? controller.duration.value.inSeconds.toDouble()
+                                      : 1.0,
+                                ),
+                                max: controller.duration.value.inSeconds.toDouble() > 0
+                                    ? controller.duration.value.inSeconds.toDouble()
+                                    : 1.0,
+                                onChanged: (val) {
+                                  if (controller.useWebViewFallback.value && controller.ytWebController != null) {
+                                    controller.ytWebController!.seekTo(seconds: val, allowSeekAhead: true);
+                                  } else {
+                                    controller.audioPlayer.seek(Duration(seconds: val.toInt()));
+                                  }
+                                },
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(_formatDuration(controller.position.value), style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                                  Text(_formatDuration(controller.duration.value), style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                                ],
+                              ),
+                            ),
+                          ],
                         ),
-                        IconButton(
-                          icon: const Icon(Icons.playlist_add, color: Colors.white70, size: 32),
-                          onPressed: () => _showAddToPlaylistBottomSheet(context, video),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-                  // 재생 진행바 (Progress Slider)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                    child: Column(
-                      children: [
-                        SliderTheme(
-                          data: SliderTheme.of(context).copyWith(
-                            trackHeight: 4,
-                            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6),
-                            overlayShape: const RoundSliderOverlayShape(overlayRadius: 14),
-                            activeTrackColor: Colors.white,
-                            inactiveTrackColor: Colors.white.withOpacity(0.3),
-                            thumbColor: Colors.white,
-                          ),
-                          child: Slider(
-                            value: controller.position.value.inSeconds.toDouble().clamp(0.0, controller.duration.value.inSeconds.toDouble() > 0 ? controller.duration.value.inSeconds.toDouble() : 1.0),
-                            max: controller.duration.value.inSeconds.toDouble() > 0 ? controller.duration.value.inSeconds.toDouble() : 1.0,
-                            onChanged: (val) {
-                              if (controller.useWebViewFallback.value && controller.ytWebController != null) {
-                                controller.ytWebController!.seekTo(seconds: val, allowSeekAhead: true);
-                              } else {
-                                controller.audioPlayer.seek(Duration(seconds: val.toInt()));
+                      ),
+                      const SizedBox(height: 16),
+                      // 재생 컨트롤
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 16),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                          children: [
+                            Obx(() => IconButton(
+                              icon: Icon(
+                                Icons.shuffle,
+                                color: controller.isShuffle.value ? const Color(0xFF1DB954) : Colors.white54,
+                                size: 24,
+                              ),
+                              onPressed: controller.toggleShuffle,
+                            )),
+                            IconButton(
+                              icon: const Icon(Icons.skip_previous, color: Colors.white, size: 40),
+                              onPressed: controller.playPrevious,
+                            ),
+                            IconButton(
+                              iconSize: 80,
+                              padding: EdgeInsets.zero,
+                              icon: Icon(
+                                controller.isPlaying.value ? Icons.pause_circle_filled : Icons.play_circle_fill,
+                                color: Colors.white,
+                                size: 80,
+                              ),
+                              onPressed: controller.togglePlay,
+                            ),
+                            IconButton(
+                              icon: const Icon(Icons.skip_next, color: Colors.white, size: 40),
+                              onPressed: controller.playNext,
+                            ),
+                            Obx(() {
+                              IconData icon = Icons.repeat;
+                              Color color = Colors.white54;
+                              if (controller.repeatMode.value == 1) {
+                                icon = Icons.repeat_one;
+                                color = const Color(0xFF1DB954);
+                              } else if (controller.repeatMode.value == 2) {
+                                icon = Icons.repeat;
+                                color = const Color(0xFF1DB954);
                               }
-                            },
-                          ),
+                              return IconButton(
+                                icon: Icon(icon, color: color, size: 24),
+                                onPressed: controller.toggleRepeat,
+                              );
+                            }),
+                          ],
                         ),
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(_formatDuration(controller.position.value), style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                              Text(_formatDuration(controller.duration.value), style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 24),
-                  // 미디어 컨트롤러 (셔플, 이전, 재생/일시정지, 다음, 반복)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      children: [
-                        Obx(() => IconButton(
-                          icon: Icon(Icons.shuffle, color: controller.isShuffle.value ? const Color(0xFF1DB954) : Colors.white54, size: 24),
-                          onPressed: controller.toggleShuffle,
+                      ),
+                      const SizedBox(height: 8),
+                      // 대기열 버튼
+                      TextButton.icon(
+                        icon: const Icon(Icons.queue_music, color: Colors.white70, size: 20),
+                        label: Obx(() => Text(
+                          '대기열 (${controller.queue.length}곡)',
+                          style: const TextStyle(color: Colors.white70, fontSize: 13),
                         )),
-                        IconButton(icon: const Icon(Icons.skip_previous, color: Colors.white, size: 40), onPressed: controller.playPrevious),
-                        IconButton(
-                          iconSize: 80,
-                          padding: EdgeInsets.zero,
-                          icon: Icon(
-                            controller.isLoading.value 
-                              ? Icons.pause_circle_filled 
-                              : (controller.isPlaying.value ? Icons.pause_circle_filled : Icons.play_circle_fill), 
-                            color: Colors.white,
-                            size: 80,
-                          ),
-                          onPressed: controller.togglePlay,
-                        ),
-                        IconButton(icon: const Icon(Icons.skip_next, color: Colors.white, size: 40), onPressed: controller.playNext),
-                        Obx(() {
-                          IconData icon = Icons.repeat;
-                          Color color = Colors.white54;
-                          if (controller.repeatMode.value == 1) {
-                            icon = Icons.repeat_one;
-                            color = const Color(0xFF1DB954);
-                          } else if (controller.repeatMode.value == 2) {
-                            icon = Icons.repeat;
-                            color = const Color(0xFF1DB954);
-                          }
-                          return IconButton(
-                            icon: Icon(icon, color: color, size: 24),
-                            onPressed: controller.toggleRepeat,
-                          );
-                        }),
-                      ],
-                    ),
+                        onPressed: () => _showQueueBottomSheet(context),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
                   ),
-                  const SizedBox(height: 16),
-                  // 재생 대기열 보기 버튼
-                  TextButton.icon(
-                    icon: const Icon(Icons.queue_music, color: Colors.white70, size: 20),
-                    label: Obx(() => Text(
-                      '대기열 (${controller.queue.length}곡)',
-                      style: const TextStyle(color: Colors.white70, fontSize: 13),
-                    )),
-                    onPressed: () => _showQueueBottomSheet(context),
-                  ),
-                  const Spacer(),
-                ],
+                ),
               ),
-            ),
-          ],
-        );
-      }),
+            ],
+          );
+        }),
       ),
     );
   }
@@ -251,7 +294,8 @@ class PlayerView extends GetView<PlayerController> {
           children: [
             // 핸들
             Container(
-              width: 40, height: 4,
+              width: 40,
+              height: 4,
               margin: const EdgeInsets.only(top: 12, bottom: 8),
               decoration: BoxDecoration(color: Colors.grey, borderRadius: BorderRadius.circular(2)),
             ),
@@ -260,7 +304,10 @@ class PlayerView extends GetView<PlayerController> {
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               child: Row(
                 children: [
-                  Icon(Icons.queue_music, color: controller.isPlaylistMode.value ? const Color(0xFF1DB954) : Colors.white70),
+                  Icon(
+                    Icons.queue_music,
+                    color: controller.isPlaylistMode.value ? const Color(0xFF1DB954) : Colors.white70,
+                  ),
                   const SizedBox(width: 8),
                   Text(
                     controller.playbackMode.value,
@@ -285,12 +332,15 @@ class PlayerView extends GetView<PlayerController> {
               ),
             )),
             const Divider(color: Colors.white12, height: 1),
-            
             Expanded(
               child: Obx(() {
-                // 플레이리스트 모드일 때는 전체 목록(히스토리 + 현재 + 대기열)을 보여줌
+                // 플레이리스트 모드: 전체 목록 표시
                 if (controller.isPlaylistMode.value) {
-                  final fullList = [...controller.historyStack, if (controller.currentVideo.value != null) controller.currentVideo.value!, ...controller.queue];
+                  final fullList = [
+                    ...controller.historyStack,
+                    if (controller.currentVideo.value != null) controller.currentVideo.value!,
+                    ...controller.queue,
+                  ];
                   final currentIndex = controller.historyStack.length;
 
                   return ListView.builder(
@@ -302,41 +352,41 @@ class PlayerView extends GetView<PlayerController> {
 
                       return ListTile(
                         dense: true,
-                        leading: isCurrent 
-                          ? const Icon(Icons.graphic_eq, color: Color(0xFF1DB954), size: 20)
-                          : Text('${index + 1}', style: const TextStyle(color: Colors.grey, fontSize: 14)),
+                        leading: isCurrent
+                            ? const Icon(Icons.graphic_eq, color: Color(0xFF1DB954), size: 20)
+                            : Text('${index + 1}', style: const TextStyle(color: Colors.grey, fontSize: 14)),
                         title: Text(
-                          v.parsedSongName, 
-                          maxLines: 1, 
-                          overflow: TextOverflow.ellipsis, 
+                          v.parsedSongName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: isCurrent ? const Color(0xFF1DB954) : Colors.white, 
+                            color: isCurrent ? const Color(0xFF1DB954) : Colors.white,
                             fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
-                            fontSize: 14
-                          )
+                            fontSize: 14,
+                          ),
                         ),
-                        subtitle: Text(v.parsedArtist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                        subtitle: Text(
+                          v.parsedArtist,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.grey, fontSize: 11),
+                        ),
                         onTap: () {
                           if (isCurrent) return;
-                          
-                          // 선택한 위치로 이동
                           if (index < currentIndex) {
-                            // 히스토리에서 선택한 경우: 현재 곡과 그 사이 곡들을 큐의 맨 앞으로 이동
                             final jumpCount = currentIndex - index;
                             for (int i = 0; i < jumpCount; i++) {
                               controller.queue.insert(0, controller.currentVideo.value!);
                               controller.currentVideo.value = controller.historyStack.removeLast();
                             }
-                            controller.playVideo(controller.currentVideo.value!, isFromQueue: true);
                           } else {
-                            // 대기열에서 선택한 경우: 이전 곡들을 히스토리로 이동
                             final jumpCount = index - currentIndex;
                             for (int i = 0; i < jumpCount; i++) {
                               controller.historyStack.add(controller.currentVideo.value!);
                               controller.currentVideo.value = controller.queue.removeAt(0);
                             }
-                            controller.playVideo(controller.currentVideo.value!, isFromQueue: true);
                           }
+                          controller.playVideo(controller.currentVideo.value!, isFromQueue: true);
                           Get.back();
                         },
                       );
@@ -344,11 +394,13 @@ class PlayerView extends GetView<PlayerController> {
                   );
                 }
 
-                // 일반 모드(자동 재생)일 때는 대기열만 보여줌
+                // 일반 모드: 대기열만 표시
                 if (controller.queue.isEmpty) {
-                  return const Center(child: Text('대기열이 비어있습니다.', style: TextStyle(color: Colors.grey)));
+                  return const Center(
+                    child: Text('대기열이 비어있습니다.', style: TextStyle(color: Colors.grey)),
+                  );
                 }
-                
+
                 return Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -360,8 +412,18 @@ class PlayerView extends GetView<PlayerController> {
                       ListTile(
                         dense: true,
                         leading: const Icon(Icons.graphic_eq, color: Color(0xFF1DB954), size: 24),
-                        title: Text(controller.currentVideo.value!.parsedSongName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Color(0xFF1DB954), fontWeight: FontWeight.bold, fontSize: 14)),
-                        subtitle: Text(controller.currentVideo.value!.parsedArtist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                        title: Text(
+                          controller.currentVideo.value!.parsedSongName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Color(0xFF1DB954), fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                        subtitle: Text(
+                          controller.currentVideo.value!.parsedArtist,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.grey, fontSize: 11),
+                        ),
                       ),
                     ],
                     const Padding(
@@ -377,8 +439,18 @@ class PlayerView extends GetView<PlayerController> {
                           return ListTile(
                             dense: true,
                             leading: Text('${index + 1}', style: const TextStyle(color: Colors.grey, fontSize: 14)),
-                            title: Text(v.parsedSongName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 14)),
-                            subtitle: Text(v.parsedArtist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey, fontSize: 11)),
+                            title: Text(
+                              v.parsedSongName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.white, fontSize: 14),
+                            ),
+                            subtitle: Text(
+                              v.parsedArtist,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.grey, fontSize: 11),
+                            ),
                             onTap: () {
                               for (int i = 0; i <= index; i++) {
                                 controller.historyStack.add(controller.currentVideo.value!);
@@ -406,7 +478,9 @@ class PlayerView extends GetView<PlayerController> {
     showModalBottomSheet(
       context: context,
       backgroundColor: const Color(0xFF1A1A1A),
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
       builder: (context) {
         return ValueListenableBuilder(
           valueListenable: Hive.box('playlists').listenable(),
@@ -417,7 +491,10 @@ class PlayerView extends GetView<PlayerController> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Text('재생목록에 추가', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  const Text(
+                    '재생목록에 추가',
+                    style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
                   const SizedBox(height: 16),
                   if (keys.isEmpty)
                     const Padding(
@@ -429,10 +506,13 @@ class PlayerView extends GetView<PlayerController> {
                     return ListTile(
                       leading: const Icon(Icons.queue_music, color: Color(0xFF1DB954)),
                       title: Text(p['name'], style: const TextStyle(color: Colors.white)),
-                      subtitle: Text('${p['songs']?.length ?? 0}곡', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                      subtitle: Text(
+                        '${p['songs']?.length ?? 0}곡',
+                        style: const TextStyle(color: Colors.grey, fontSize: 12),
+                      ),
                       onTap: () {
-                        controller.addVideoToPlaylist(video, key);
                         Get.back();
+                        controller.addVideoToPlaylist(video, key);
                       },
                     );
                   }).toList(),
@@ -458,12 +538,12 @@ class PlayerView extends GetView<PlayerController> {
     final TextEditingController textController = TextEditingController();
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1A1A1A),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text(
-          '새 재생목록', 
-          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)
+          '새 재생목록',
+          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
         ),
         content: TextField(
           controller: textController,
@@ -478,7 +558,7 @@ class PlayerView extends GetView<PlayerController> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(ctx),
             child: const Text('취소', style: TextStyle(color: Colors.grey)),
           ),
           TextButton(
@@ -487,16 +567,19 @@ class PlayerView extends GetView<PlayerController> {
               if (name.isNotEmpty) {
                 var box = Hive.box('playlists');
                 if (box.length >= 10) {
-                  Get.snackbar('알림', '재생목록은 최대 10개까지 가능합니다.', snackPosition: SnackPosition.TOP);
+                  Get.rawSnackbar(message: '재생목록은 최대 10개까지 가능합니다.');
                   return;
                 }
                 String key = DateTime.now().millisecondsSinceEpoch.toString();
                 box.put(key, {'name': name, 'songs': []});
+                Navigator.pop(ctx);
                 controller.addVideoToPlaylist(video, key);
-                Navigator.pop(context); // 확실히 닫기 위해 Navigator 사용
               }
             },
-            child: const Text('만들기', style: TextStyle(color: Color(0xFF1DB954), fontWeight: FontWeight.bold)),
+            child: const Text(
+              '만들기',
+              style: TextStyle(color: Color(0xFF1DB954), fontWeight: FontWeight.bold),
+            ),
           ),
         ],
       ),

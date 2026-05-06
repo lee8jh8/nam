@@ -7,14 +7,14 @@ class AppTranslations extends Translations {
           'app_name': 'SONIC FLOW',
           'trending_now': '최신 인기곡',
           'search': '검색',
-          'library': '보관함',
+          'library': '재생목록',
           'home': '홈',
         },
         'en_US': {
           'app_name': 'SONIC FLOW',
           'trending_now': 'Trending Now',
           'search': 'Search',
-          'library': 'Library',
+          'library': 'Playlist',
           'home': 'Home',
         }
       };

@@ -316,6 +316,21 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
   }
 
   Future<void> playVideo(Video video, {bool isFromQueue = false}) async {
+    // 0. 현재 재생 중인 곡과 동일한 ID인 경우 로딩 없이 처음부터 재생
+    if (currentVideo.value?.id.value == video.id.value && audioPlayer.audioSource != null) {
+      if (kDebugMode) print('Same video ID detected: Seeking to zero instead of reloading');
+      if (useWebViewFallback.value && ytWebController != null) {
+        ytWebController!.seekTo(seconds: 0.0);
+        ytWebController!.playVideo();
+      } else {
+        await audioPlayer.seek(Duration.zero);
+        audioPlayer.play();
+      }
+      isPlaying.value = true;
+      isLoading.value = false;
+      return;
+    }
+
     if (kDebugMode) print('playVideo called for ID: ${video.id.value}');
     
     // 1. 즉시 UI 상태 초기화 (로딩 표시)
@@ -485,12 +500,16 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
   }
 
   void addVideoToPlaylist(Video video, dynamic playlistKey) {
+    if (kDebugMode) print('Attempting to add video ${video.id.value} to playlist $playlistKey');
     var box = Hive.box('playlists');
-    var p = Map.from(box.get(playlistKey));
+    var data = box.get(playlistKey);
+    if (data == null) return;
+    
+    var p = Map<String, dynamic>.from(data);
     List songs = List.from(p['songs'] ?? []);
     
     if (songs.length >= 100) {
-      Get.snackbar('알림', '재생목록 당 최대 100곡까지만 등록 가능합니다.', snackPosition: SnackPosition.TOP);
+      Get.rawSnackbar(message: '재생목록 당 최대 100곡까지만 등록 가능합니다.');
       return;
     }
     
@@ -503,12 +522,16 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     p['songs'] = songs;
     box.put(playlistKey, p);
     
-    Get.snackbar(
-      '추가 완료', 
-      '${p['name']} 재생목록에 추가되었습니다.',
+    if (kDebugMode) print('Successfully added to playlist. Showing custom snackbar.');
+    
+    Get.rawSnackbar(
+      title: '추가 완료',
+      message: '${p['name']} 목록에 추가되었습니다.',
       snackPosition: SnackPosition.TOP,
-      backgroundColor: const Color(0xFF1DB954).withOpacity(0.8),
-      colorText: Colors.white,
+      backgroundColor: const Color(0xFF1DB954),
+      margin: const EdgeInsets.all(16),
+      borderRadius: 30,
+      duration: const Duration(seconds: 2),
     );
   }
 

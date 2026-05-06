@@ -103,7 +103,7 @@ class SearchView extends StatelessWidget {
     var keys = box.keys.toList();
 
     if (keys.isEmpty) {
-      Get.snackbar('알림', '먼저 보관함에서 재생목록을 만들어 주세요.',
+      Get.snackbar('알림', '재생목록 탭에서 먼저 목록을 만들어 주세요.',
         snackPosition: SnackPosition.TOP,
         backgroundColor: const Color(0xFF2B1A4A),
         colorText: Colors.white,
