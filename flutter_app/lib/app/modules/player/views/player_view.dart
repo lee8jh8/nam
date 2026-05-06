@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import '../controllers/player_controller.dart';
 import 'dart:ui';
 
@@ -105,13 +107,23 @@ class PlayerView extends GetView<PlayerController> {
                   const SizedBox(height: 8),
                   // 곡 제목 및 아티스트
                   Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 32),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+                    padding: const EdgeInsets.symmetric(horizontal: 24),
+                    child: Row(
                       children: [
-                        Text(video.parsedSongName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 8),
-                        Text(video.parsedArtist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey, fontSize: 18)),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(video.parsedSongName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold)),
+                              const SizedBox(height: 8),
+                              Text(video.parsedArtist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey, fontSize: 18)),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.playlist_add, color: Colors.white70, size: 32),
+                          onPressed: () => _showAddToPlaylistBottomSheet(context, video),
+                        ),
                       ],
                     ),
                   ),
@@ -387,6 +399,107 @@ class PlayerView extends GetView<PlayerController> {
         ),
       ),
       isScrollControlled: true,
+    );
+  }
+
+  void _showAddToPlaylistBottomSheet(BuildContext context, Video video) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: const Color(0xFF1A1A1A),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (context) {
+        return ValueListenableBuilder(
+          valueListenable: Hive.box('playlists').listenable(),
+          builder: (context, Box box, _) {
+            var keys = box.keys.toList();
+            return Container(
+              padding: const EdgeInsets.symmetric(vertical: 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('재생목록에 추가', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 16),
+                  if (keys.isEmpty)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 32),
+                      child: Text('생성된 재생목록이 없습니다.', style: TextStyle(color: Colors.grey)),
+                    ),
+                  ...keys.map((key) {
+                    var p = box.get(key);
+                    return ListTile(
+                      leading: const Icon(Icons.queue_music, color: Color(0xFF1DB954)),
+                      title: Text(p['name'], style: const TextStyle(color: Colors.white)),
+                      subtitle: Text('${p['songs']?.length ?? 0}곡', style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                      onTap: () {
+                        controller.addVideoToPlaylist(video, key);
+                        Get.back();
+                      },
+                    );
+                  }).toList(),
+                  const Divider(color: Colors.white12),
+                  ListTile(
+                    leading: const Icon(Icons.add, color: Colors.white),
+                    title: const Text('새 재생목록 만들기', style: TextStyle(color: Colors.white)),
+                    onTap: () {
+                      Get.back();
+                      _showCreatePlaylistDialog(context, video);
+                    },
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showCreatePlaylistDialog(BuildContext context, Video video) {
+    final TextEditingController textController = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: const Color(0xFF1A1A1A),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text(
+          '새 재생목록', 
+          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)
+        ),
+        content: TextField(
+          controller: textController,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            hintText: '목록 이름을 입력하세요',
+            hintStyle: TextStyle(color: Colors.grey, fontSize: 14),
+            enabledBorder: UnderlineInputBorder(borderSide: BorderSide(color: Colors.white24)),
+            focusedBorder: UnderlineInputBorder(borderSide: BorderSide(color: Color(0xFF1DB954))),
+          ),
+          autofocus: true,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('취소', style: TextStyle(color: Colors.grey)),
+          ),
+          TextButton(
+            onPressed: () {
+              String name = textController.text.trim();
+              if (name.isNotEmpty) {
+                var box = Hive.box('playlists');
+                if (box.length >= 10) {
+                  Get.snackbar('알림', '재생목록은 최대 10개까지 가능합니다.', snackPosition: SnackPosition.TOP);
+                  return;
+                }
+                String key = DateTime.now().millisecondsSinceEpoch.toString();
+                box.put(key, {'name': name, 'songs': []});
+                controller.addVideoToPlaylist(video, key);
+                Navigator.pop(context); // 확실히 닫기 위해 Navigator 사용
+              }
+            },
+            child: const Text('만들기', style: TextStyle(color: Color(0xFF1DB954), fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
     );
   }
 }

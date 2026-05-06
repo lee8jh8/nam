@@ -86,6 +86,13 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
         repeatMode.value = lastPlayed['repeatMode'] ?? 0;
         isShuffle.value = lastPlayed['isShuffle'] ?? false;
 
+        // 루프 모드 동기화
+        if (repeatMode.value == 1) {
+          audioPlayer.setLoopMode(LoopMode.one);
+        } else {
+          audioPlayer.setLoopMode(LoopMode.off);
+        }
+
         // 대기열 복원
         List? savedQueue = lastPlayed['queue'];
         if (savedQueue != null) {
@@ -191,13 +198,22 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
   Future<void> playNext() async {
     if (currentVideo.value == null) return;
 
-    // 한곡 반복 모드인 경우
+    // 한곡 반복 모드인 경우: seek(0)만 수행하여 데이터 재로딩 방지
     if (repeatMode.value == 1) {
-      await playVideo(currentVideo.value!, isFromQueue: true);
+      if (kDebugMode) print('Repeat One mode: Seeking to zero');
+      if (useWebViewFallback.value && ytWebController != null) {
+        ytWebController!.seekTo(seconds: 0.0);
+        ytWebController!.playVideo();
+      } else {
+        await audioPlayer.seek(Duration.zero);
+        audioPlayer.play();
+      }
       return;
     }
 
-    historyStack.add(currentVideo.value!);
+    if (currentVideo.value != null) {
+      historyStack.add(currentVideo.value!);
+    }
     
     if (queue.isNotEmpty) {
       var nextVideo = queue.removeAt(0);
@@ -300,6 +316,8 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
   }
 
   Future<void> playVideo(Video video, {bool isFromQueue = false}) async {
+    if (kDebugMode) print('playVideo called for ID: ${video.id.value}');
+    
     // 1. 즉시 UI 상태 초기화 (로딩 표시)
     _cancelCurrentLoad = false;
     isLoading.value = true;
@@ -327,7 +345,9 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
       _fetchRelatedAndFillQueue(video);
     }
     
+    if (kDebugMode) print('Fetching stream URLs for ${video.id.value}...');
     final urls = await _ytService.getAudioStreamUrls(video.id.value);
+    if (kDebugMode) print('Found ${urls.length} URLs');
     
     if (_cancelCurrentLoad) {
       isLoading.value = false;
@@ -464,6 +484,34 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     await playVideo(playlistVideos[initialIndex], isFromQueue: true);
   }
 
+  void addVideoToPlaylist(Video video, dynamic playlistKey) {
+    var box = Hive.box('playlists');
+    var p = Map.from(box.get(playlistKey));
+    List songs = List.from(p['songs'] ?? []);
+    
+    if (songs.length >= 100) {
+      Get.snackbar('알림', '재생목록 당 최대 100곡까지만 등록 가능합니다.', snackPosition: SnackPosition.TOP);
+      return;
+    }
+    
+    songs.add({
+      'id': video.id.value,
+      'title': video.title,
+      'author': video.author,
+    });
+    
+    p['songs'] = songs;
+    box.put(playlistKey, p);
+    
+    Get.snackbar(
+      '추가 완료', 
+      '${p['name']} 재생목록에 추가되었습니다.',
+      snackPosition: SnackPosition.TOP,
+      backgroundColor: const Color(0xFF1DB954).withOpacity(0.8),
+      colorText: Colors.white,
+    );
+  }
+
   void toggleShuffle() {
     isShuffle.value = !isShuffle.value;
     if (isShuffle.value && queue.isNotEmpty) {
@@ -482,6 +530,14 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
 
   void toggleRepeat() {
     repeatMode.value = (repeatMode.value + 1) % 3;
+    
+    // 네이티브 플레이어 루프 모드 설정 (데이터 재로딩 방지)
+    if (repeatMode.value == 1) {
+      audioPlayer.setLoopMode(LoopMode.one);
+    } else {
+      audioPlayer.setLoopMode(LoopMode.off);
+    }
+
     _saveCurrentState();
     String msg = '';
     if (repeatMode.value == 0) msg = '반복 재생 안 함';
@@ -528,7 +584,12 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     if (audioPlayer.playing) {
       audioPlayer.pause();
     } else {
-      audioPlayer.play();
+      // 복원된 곡이라 소스가 없는 경우, playVideo를 통해 소스 로드 후 재생
+      if (audioPlayer.audioSource == null && currentVideo.value != null) {
+        playVideo(currentVideo.value!, isFromQueue: true);
+      } else {
+        audioPlayer.play();
+      }
     }
   }
 
