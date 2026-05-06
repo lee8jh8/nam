@@ -7,11 +7,13 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:youtube_player_iframe/youtube_player_iframe.dart' as yt_iframe;
 import '../../../data/services/youtube_service.dart';
+import '../../../data/services/lastfm_service.dart';
 import '../../home/controllers/home_controller.dart';
 
 class PlayerController extends GetxController with WidgetsBindingObserver {
   final AudioPlayer audioPlayer = AudioPlayer();
   final YouTubeService _ytService = YouTubeService();
+  final LastFmService _lastFmService = LastFmService();
   
   yt_iframe.YoutubePlayerController? ytWebController;
   var useWebViewFallback = false.obs;
@@ -144,27 +146,68 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     if (_isFetchingQueue) return;
     _isFetchingQueue = true;
 
+    final historyIds = historyStack.map((e) => e.id.value).toSet();
+    final queueIds = queue.map((e) => e.id.value).toSet();
+    final excludeIds = {...historyIds, ...queueIds, video.id.value};
+
+    // 1순위: Last.fm 유사 트랙 기반 추천
+    try {
+      final trackName = video.parsedSongName;
+      final artistName = video.parsedArtist;
+
+      if (trackName.isNotEmpty && artistName.isNotEmpty) {
+        final similarTracks = await _lastFmService.getSimilarTracks(trackName, artistName, limit: 10);
+
+        if (similarTracks.isNotEmpty) {
+          final List<Video> foundVideos = [];
+
+          for (final track in similarTracks) {
+            if (foundVideos.length >= 5) break;
+            try {
+              final query = '${track.name} ${track.artist}';
+              final results = await _ytService.searchSongs(query);
+              final filtered = results.where((v) =>
+                v.duration != null &&
+                v.duration!.inMinutes < 10 &&
+                !excludeIds.contains(v.id.value)
+              ).toList();
+
+              if (filtered.isNotEmpty) {
+                foundVideos.add(filtered.first);
+                excludeIds.add(filtered.first.id.value);
+                if (kDebugMode) print('[LastFM] Queued: ${track.artist} - ${track.name}');
+              }
+            } catch (_) {}
+          }
+
+          if (foundVideos.isNotEmpty) {
+            queue.addAll(foundVideos);
+            _isFetchingQueue = false;
+            return;
+          }
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) print('[LastFM] Failed to get similar tracks: $e');
+    }
+
+    // 2순위: YouTube 연관 영상
     try {
       var related = await _ytService.getRelatedVideos(video);
-      related.removeWhere((v) => v.id.value == video.id.value);
+      related.removeWhere((v) => excludeIds.contains(v.id.value));
       if (related.isNotEmpty) {
-        queue.addAll(related);
+        queue.addAll(related.take(5));
         _isFetchingQueue = false;
         return;
       }
     } catch (_) {}
-    
+
+    // 3순위: 아티스트 이름으로 YouTube 검색
     try {
       var artist = video.parsedArtist;
       if (artist.isNotEmpty) {
         var searchResults = await _ytService.searchSongs(artist);
-        var historyIds = historyStack.map((e) => e.id.value).toSet();
-        var queueIds = queue.map((e) => e.id.value).toSet();
-        searchResults.removeWhere((v) => 
-            v.id.value == video.id.value || 
-            historyIds.contains(v.id.value) || 
-            queueIds.contains(v.id.value));
-            
+        searchResults.removeWhere((v) => excludeIds.contains(v.id.value));
         if (searchResults.isNotEmpty) {
           searchResults.shuffle();
           queue.addAll(searchResults.take(10));
@@ -174,20 +217,31 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
       }
     } catch (_) {}
 
-    // 최후의 보루: 홈 컨트롤러의 최신 인기곡 중 선택
+    // 4순위: 홈 인기곡 폴백 (Last.fm 차트 기반)
     try {
       if (Get.isRegistered<HomeController>()) {
-        var trending = Get.find<HomeController>().trendingSongs.toList();
-        var historyIds = historyStack.map((e) => e.id.value).toSet();
-        var queueIds = queue.map((e) => e.id.value).toSet();
-        trending.removeWhere((v) => 
-            v.id.value == video.id.value || 
-            historyIds.contains(v.id.value) || 
-            queueIds.contains(v.id.value));
-            
+        final trending = Get.find<HomeController>().trendingSongs.toList();
         if (trending.isNotEmpty) {
           trending.shuffle();
-          queue.addAll(trending.take(5));
+          int count = 0;
+          for (final track in trending) {
+            if (count >= 3) break; // 성능을 위해 최대 3곡만 검색해서 추가
+            try {
+              final query = '${track.name} ${track.artist}';
+              final results = await _ytService.searchSongs(query);
+              final filtered = results.where((v) => 
+                v.duration != null && 
+                v.duration!.inMinutes < 10 && 
+                !excludeIds.contains(v.id.value)
+              ).toList();
+              
+              if (filtered.isNotEmpty) {
+                queue.add(filtered.first);
+                excludeIds.add(filtered.first.id.value);
+                count++;
+              }
+            } catch (_) {}
+          }
         }
       }
     } catch (_) {}

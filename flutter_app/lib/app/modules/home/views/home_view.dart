@@ -160,54 +160,128 @@ class HomeView extends StatelessWidget {
     return SizedBox(
       height: 220,
       child: Obx(() {
-        if (controller.isLoading.value) {
+        if (controller.isLoading.value && controller.trendingSongs.isEmpty) {
           return const Center(child: CircularProgressIndicator(color: Color(0xFF1DB954)));
         }
-        return ListView.builder(
-          scrollDirection: Axis.horizontal,
-          itemCount: controller.trendingSongs.length,
-          itemBuilder: (context, index) {
-            final video = controller.trendingSongs[index];
-            final cleanTitle = controller.parseTitle(video.title);
-            return GestureDetector(
-              onTap: () => playerController.playVideo(video),
-              child: Container(
-                width: 150,
-                margin: const EdgeInsets.only(right: 16),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF1A1A1A),
-                  borderRadius: BorderRadius.circular(16),
-                  image: DecorationImage(
-                    image: NetworkImage(video.thumbnails.highResUrl),
-                    fit: BoxFit.cover,
-                  ),
-                ),
+        
+        return NotificationListener<ScrollNotification>(
+          onNotification: (ScrollNotification scrollInfo) {
+            // 끝에 도달하기 전에 미리 로드 (80% 지점)
+            if (scrollInfo.metrics.pixels >= scrollInfo.metrics.maxScrollExtent * 0.8) {
+              controller.fetchMoreTrending();
+            }
+            return true;
+          },
+          child: ListView.builder(
+            scrollDirection: Axis.horizontal,
+            itemCount: controller.trendingSongs.length + (controller.isMoreLoading.value ? 1 : 0),
+            itemBuilder: (context, index) {
+              if (index == controller.trendingSongs.length) {
+                return const SizedBox(
+                  width: 100,
+                  child: Center(child: CircularProgressIndicator(color: Color(0xFF1DB954))),
+                );
+              }
+
+              final track = controller.trendingSongs[index];
+              return GestureDetector(
+                onTap: () async {
+                  Get.dialog(
+                    const Center(child: CircularProgressIndicator(color: Color(0xFF1DB954))),
+                    barrierDismissible: false,
+                  );
+                  
+                  final video = await controller.searchAndGetVideo(track);
+                  Get.back();
+                  
+                  if (video != null) {
+                    playerController.playVideo(video);
+                  } else {
+                    Get.rawSnackbar(message: '영상을 찾을 수 없습니다.');
+                  }
+                },
                 child: Container(
+                  width: 150,
+                  margin: const EdgeInsets.only(right: 16),
                   decoration: BoxDecoration(
+                    color: const Color(0xFF1A1A1A),
                     borderRadius: BorderRadius.circular(16),
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Colors.transparent, Colors.black.withOpacity(0.9)],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        // Thumbnail Image
+                        if (track.imageUrl != null && 
+                            track.imageUrl!.isNotEmpty && 
+                            !track.imageUrl!.contains('2a96cbd8b46e442fc41c2b86b821562f'))
+                          Image.network(
+                            track.imageUrl!,
+                            fit: BoxFit.cover,
+                            errorBuilder: (context, error, stackTrace) => _buildPlaceholder(),
+                          )
+                        else
+                          _buildPlaceholder(),
+                        
+                        // Gradient Overlay
+                        Container(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [Colors.transparent, Colors.black.withOpacity(0.8)],
+                            ),
+                          ),
+                        ),
+                        
+                        // Text Info
+                        Padding(
+                          padding: const EdgeInsets.all(12),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.end,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                track.name, 
+                                maxLines: 2, 
+                                overflow: TextOverflow.ellipsis, 
+                                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                track.artist, 
+                                maxLines: 1, 
+                                overflow: TextOverflow.ellipsis, 
+                                style: const TextStyle(color: Colors.grey, fontSize: 12)
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  padding: const EdgeInsets.all(12),
-                  alignment: Alignment.bottomLeft,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(video.parsedSongName, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
-                      const SizedBox(height: 4),
-                      Text(video.parsedArtist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey, fontSize: 12)),
-                    ],
-                  ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         );
       }),
+    );
+  }
+
+  Widget _buildPlaceholder() {
+    return Container(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.grey[800]!, Colors.grey[900]!],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+      ),
+      child: const Center(
+        child: Icon(Icons.music_note, color: Colors.white24, size: 48),
+      ),
     );
   }
 

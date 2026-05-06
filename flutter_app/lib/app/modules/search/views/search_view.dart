@@ -31,7 +31,7 @@ class SearchView extends StatelessWidget {
         ),
       ),
       body: Obx(() {
-        if (controller.isLoading.value) {
+        if (controller.isLoading.value && controller.searchResults.isEmpty) {
           return const Center(child: CircularProgressIndicator(color: Color(0xFF1DB954)));
         }
 
@@ -53,28 +53,43 @@ class SearchView extends StatelessWidget {
           );
         }
 
-        return ListView.builder(
-          keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
-          itemCount: controller.searchResults.length,
-          itemBuilder: (context, index) {
-            final video = controller.searchResults[index];
-            return ListTile(
-              leading: ClipRRect(
-                borderRadius: BorderRadius.circular(6),
-                child: Image.network(video.thumbnails.lowResUrl, width: 50, height: 50, fit: BoxFit.cover),
-              ),
-              title: Text(video.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white)),
-              subtitle: Text(video.author, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey)),
-              onTap: () {
-                playerController.playVideo(video);
-                FocusScope.of(context).unfocus();
-                Get.toNamed('/player');
-              },
-              onLongPress: () {
-                _showAddToPlaylistDialog(context, video);
-              },
-            );
+        return NotificationListener<ScrollNotification>(
+          onNotification: (ScrollNotification scrollInfo) {
+            if (scrollInfo.metrics.pixels >= scrollInfo.metrics.maxScrollExtent * 0.8) {
+              controller.searchMore();
+            }
+            return true;
           },
+          child: ListView.builder(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+            itemCount: controller.searchResults.length + (controller.isMoreLoading.value ? 1 : 0),
+            itemBuilder: (context, index) {
+              if (index == controller.searchResults.length) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 20),
+                  child: Center(child: CircularProgressIndicator(color: Color(0xFF1DB954))),
+                );
+              }
+
+              final video = controller.searchResults[index];
+              return ListTile(
+                leading: ClipRRect(
+                  borderRadius: BorderRadius.circular(6),
+                  child: Image.network(video.thumbnails.lowResUrl, width: 50, height: 50, fit: BoxFit.cover),
+                ),
+                title: Text(video.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white)),
+                subtitle: Text(video.author, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey)),
+                onTap: () {
+                  playerController.playVideo(video);
+                  FocusScope.of(context).unfocus();
+                  Get.toNamed('/player');
+                },
+                onLongPress: () {
+                  _showAddToPlaylistDialog(context, video);
+                },
+              );
+            },
+          ),
         );
       }),
       bottomNavigationBar: BottomNavigationBar(
