@@ -8,8 +8,8 @@ import 'dart:ui';
 class HomeView extends StatelessWidget {
   HomeView({super.key});
 
-  final HomeController controller = Get.put(HomeController());
-  final PlayerController playerController = Get.put(PlayerController());
+  final HomeController controller = Get.find<HomeController>();
+  final PlayerController playerController = Get.find<PlayerController>();
 
   @override
   Widget build(BuildContext context) {
@@ -106,6 +106,8 @@ class HomeView extends StatelessWidget {
         onTap: (index) {
           if (index == 1) {
             Get.toNamed('/search');
+          } else if (index == 2) {
+            Get.toNamed('/library');
           }
         },
         items: [
@@ -324,8 +326,32 @@ class HomeView extends StatelessWidget {
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(video.parsedSongName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
-                      Text(video.parsedArtist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+                      Row(
+                        children: [
+                          Expanded(child: Text(video.parsedSongName, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13))),
+                        ],
+                      ),
+                      Row(
+                        children: [
+                          Obx(() => Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+                            decoration: BoxDecoration(
+                              color: playerController.isPlaylistMode.value ? const Color(0xFF1DB954).withOpacity(0.3) : Colors.white.withOpacity(0.08),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              playerController.playbackMode.value,
+                              style: TextStyle(
+                                color: playerController.isPlaylistMode.value ? const Color(0xFF1DB954) : Colors.grey,
+                                fontSize: 9,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          )),
+                          const SizedBox(width: 6),
+                          Flexible(child: Text(video.parsedArtist, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(color: Colors.grey, fontSize: 11))),
+                        ],
+                      ),
                     ],
                   ),
                 ),

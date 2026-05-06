@@ -5,6 +5,7 @@ import '../modules/search/views/search_view.dart';
 import '../modules/player/views/player_view.dart';
 import '../modules/settings/views/settings_view.dart';
 import '../modules/settings/controllers/settings_controller.dart';
+import '../modules/library/views/library_view.dart';
 
 class AppPages {
   static const INITIAL = '/splash';
@@ -36,6 +37,11 @@ class AppPages {
         Get.put(SettingsController());
       }),
       transition: Transition.rightToLeft,
+    ),
+    GetPage(
+      name: '/library',
+      page: () => const LibraryView(),
+      transition: Transition.fadeIn,
     ),
   ];
 }

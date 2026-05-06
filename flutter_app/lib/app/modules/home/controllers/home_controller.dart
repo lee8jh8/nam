@@ -23,6 +23,7 @@ class HomeController extends GetxController {
   }
 
   void fetchTrending() async {
+    if (trendingSongs.isNotEmpty) return;
     isLoading.value = true;
     try {
       // 실제 유튜브의 최신 인기 음악을 검색해서 가져옴 (모음집 제외 필터링 적용됨)

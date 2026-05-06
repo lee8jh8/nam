@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:just_audio/just_audio.dart';
@@ -21,6 +22,12 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
   var position = Duration.zero.obs;
   var isLoading = false.obs;
   var loadingPercent = 0.obs;
+
+  // 재생 모드 관리
+  var isPlaylistMode = false.obs;
+  var playbackMode = '자동 재생'.obs;
+  var isShuffle = false.obs;
+  var repeatMode = 0.obs; // 0: None, 1: One, 2: All
 
   var queue = <Video>[].obs;
   var historyStack = <Video>[].obs;
@@ -49,6 +56,8 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     super.onInit();
     WidgetsBinding.instance.addObserver(this);
     audioPlayer.playerStateStream.listen((state) {
+      // WebView 폴백 모드일 때는 네이티브 플레이어 상태 변경을 무시
+      if (useWebViewFallback.value) return;
       isPlaying.value = state.playing;
       // 곡 재생이 끝나면 자동으로 다음 곡 재생
       if (state.processingState == ProcessingState.completed) {
@@ -61,6 +70,53 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     audioPlayer.durationStream.listen((dur) {
       duration.value = dur ?? Duration.zero;
     });
+
+    // 마지막으로 재생한 곡 복원
+    _restoreLastPlayed();
+  }
+
+  void _restoreLastPlayed() {
+    var box = Hive.box('settings');
+    var lastPlayed = box.get('last_played');
+    if (lastPlayed != null && lastPlayed is Map) {
+      try {
+        currentVideo.value = _mapToVideo(lastPlayed);
+        playbackMode.value = lastPlayed['mode'] ?? '자동 재생';
+        isPlaylistMode.value = lastPlayed['isPlaylist'] ?? false;
+        repeatMode.value = lastPlayed['repeatMode'] ?? 0;
+        isShuffle.value = lastPlayed['isShuffle'] ?? false;
+
+        // 대기열 복원
+        List? savedQueue = lastPlayed['queue'];
+        if (savedQueue != null) {
+          queue.assignAll(savedQueue.map((e) => _mapToVideo(e)).toList());
+        }
+
+        // 히스토리 복원
+        List? savedHistory = lastPlayed['history'];
+        if (savedHistory != null) {
+          historyStack.assignAll(savedHistory.map((e) => _mapToVideo(e)).toList());
+        }
+      } catch (_) {}
+    }
+  }
+
+  Video _mapToVideo(Map map) {
+    return Video(
+      VideoId(map['id']),
+      map['title'] ?? '',
+      map['author'] ?? '',
+      ChannelId('UC0000000000000000000000'),
+      DateTime.now(),
+      DateTime.now().toString(),
+      DateTime.now(),
+      '',
+      null,
+      ThumbnailSet(map['id']),
+      const [],
+      Engagement(0, 0, 0),
+      false,
+    );
   }
 
   @override
@@ -133,17 +189,41 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
   }
 
   Future<void> playNext() async {
-    if (currentVideo.value != null) {
-      historyStack.add(currentVideo.value!);
+    if (currentVideo.value == null) return;
+
+    // 한곡 반복 모드인 경우
+    if (repeatMode.value == 1) {
+      await playVideo(currentVideo.value!, isFromQueue: true);
+      return;
     }
+
+    historyStack.add(currentVideo.value!);
     
     if (queue.isNotEmpty) {
       var nextVideo = queue.removeAt(0);
       await playVideo(nextVideo, isFromQueue: true);
-      if (queue.length < 3) {
+      // 재생목록 모드에서는 큐를 자동으로 채우지 않음
+      if (!isPlaylistMode.value && queue.length < 3) {
         _fetchRelatedAndFillQueue(nextVideo);
       }
     } else {
+      // 재생목록 전체 반복 모드인 경우
+      if (isPlaylistMode.value && repeatMode.value == 2) {
+        // 히스토리에 쌓인 곡들을 다시 큐로 옮기고 처음부터 재생
+        final allSongs = [...historyStack];
+        historyStack.clear();
+        final firstVideo = allSongs.removeAt(0);
+        queue.assignAll(allSongs);
+        await playVideo(firstVideo, isFromQueue: true);
+        return;
+      }
+
+      // 재생목록이 끝났으면 자동 재생 모드로 전환
+      if (isPlaylistMode.value) {
+        isPlaylistMode.value = false;
+        playbackMode.value = '자동 재생';
+      }
+      
       if (currentVideo.value != null) {
         await _fetchRelatedAndFillQueue(currentVideo.value!);
         if (queue.isNotEmpty) {
@@ -220,26 +300,32 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
   }
 
   Future<void> playVideo(Video video, {bool isFromQueue = false}) async {
-    // 이전 재생 완전히 중지 (중복 재생 방지)
+    // 1. 즉시 UI 상태 초기화 (로딩 표시)
+    _cancelCurrentLoad = false;
+    isLoading.value = true;
+    _startLoadingProgress();
+    isPlaying.value = false;
+    position.value = Duration.zero;
+    duration.value = Duration.zero;
+    currentVideo.value = video;
+
+    // 2. 이전 재생 중지
     try {
-      if (audioPlayer.playing) await audioPlayer.stop();
+      await audioPlayer.stop();
       if (ytWebController != null) ytWebController!.stopVideo();
     } catch (_) {}
     useWebViewFallback.value = false;
-    isPlaying.value = false;
 
-    if (!isFromQueue && currentVideo.value != null) {
-      historyStack.add(currentVideo.value!);
+    // 3. 일반 모드일 경우 대기열 관리
+    if (!isFromQueue) {
+      if (currentVideo.value != null && currentVideo.value != video) {
+        historyStack.add(currentVideo.value!);
+      }
       queue.clear();
-      _fetchRelatedAndFillQueue(video);
-    } else if (!isFromQueue && currentVideo.value == null) {
+      isPlaylistMode.value = false;
+      playbackMode.value = '자동 재생';
       _fetchRelatedAndFillQueue(video);
     }
-
-    _cancelCurrentLoad = false;
-    _startLoadingProgress();
-    isLoading.value = true;
-    currentVideo.value = video;
     
     final urls = await _ytService.getAudioStreamUrls(video.id.value);
     
@@ -252,7 +338,7 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     
     for (String url in urls) {
       try {
-        // 시도 1: User-Agent 주입 (차단 우회)
+        if (kDebugMode) print('Attempting play with headers: $url');
         await audioPlayer.setAudioSource(AudioSource.uri(
           Uri.parse(url),
           headers: {'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1'},
@@ -262,7 +348,7 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
         success = true;
         break; // 성공 시 루프 탈출
       } catch (e) {
-        print('Playback error with headers: $e');
+        if (kDebugMode) print('Playback error with headers: $e');
         // 시도 2: 헤더 제거 (AVPlayer 자체 처리 유도)
         try {
           await audioPlayer.setAudioSource(AudioSource.uri(Uri.parse(url)));
@@ -271,25 +357,21 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
           success = true;
           break; // 성공 시 루프 탈출
         } catch (e2) {
-          print('Playback error without headers: $e2');
+          if (kDebugMode) print('Playback error without headers: $e2');
           // 다음 Fallback URL로 넘어감
         }
       }
     }
 
     if (!success) {
-      Get.snackbar(
-        '우회 재생', 
-        '네이티브 재생 불가 곡입니다. 웹뷰 모드로 우회 재생합니다.',
-        snackPosition: SnackPosition.TOP,
-        backgroundColor: const Color(0xFF2B1A4A),
-        colorText: Colors.white,
-      );
-      print('Native Stream 시도 실패. 숨겨진 WebView Player(Fallback)로 전환합니다.');
+      if (kDebugMode) {
+        print('Native Stream 시도 실패. WebView Fallback으로 전환합니다.');
+      }
+      // 중요: audioPlayer를 먼저 중지한 후 WebView를 초기화해야 네이티브 리스너가 isPlaying을 덮어쓰지 않음
+      await audioPlayer.stop();
       _initWebViewFallback(video.id.value);
       _addToRecentlyPlayed(video);
-      success = true;
-      audioPlayer.stop(); // just_audio 중단
+      isPlaying.value = true;
     }
     
     _stopLoadingProgress();
@@ -309,10 +391,116 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     history.insert(0, videoMap);
     if (history.length > 10) history = history.sublist(0, 10);
     box.put('recent_played', history);
-    
+
+    // 마지막 재생곡 및 대기열 정보 저장 (앱 재시작 시 복원용)
+    box.put('last_played', {
+      'id': video.id.value,
+      'title': video.title,
+      'author': video.author,
+      'mode': playbackMode.value,
+      'isPlaylist': isPlaylistMode.value,
+      'repeatMode': repeatMode.value,
+      'isShuffle': isShuffle.value,
+      'queue': queue.map((v) => _videoToMap(v)).toList(),
+      'history': historyStack.map((v) => _videoToMap(v)).toList(),
+    });
+
     // HomeController가 초기화되어 있다면 데이터 갱신
     if (Get.isRegistered<HomeController>()) {
       Get.find<HomeController>().loadRecentPlayed();
+    }
+  }
+
+  Map _videoToMap(Video v) {
+    return {
+      'id': v.id.value,
+      'title': v.title,
+      'author': v.author,
+    };
+  }  
+
+  /// 플레이리스트 모드로 곡 목록을 재생합니다.
+  Future<void> playPlaylist(String playlistName, List<Map> songs, {int initialIndex = 0}) async {
+    if (songs.isEmpty || initialIndex < 0 || initialIndex >= songs.length) return;
+
+    if (kDebugMode) print('Starting playPlaylist: $playlistName with ${songs.length} songs');
+
+    isPlaylistMode.value = true;
+    playbackMode.value = playlistName;
+    historyStack.clear();
+    queue.clear();
+
+    // 1. 전체 리스트를 history와 queue로 분배
+    List<Video> playlistVideos = songs.map((s) => Video(
+      VideoId(s['id'].toString()),
+      s['title']?.toString() ?? 'Unknown Title',
+      s['author']?.toString() ?? 'Unknown Author',
+      ChannelId('UC0000000000000000000000'),
+      DateTime.now(), // uploadDate
+      DateTime.now().toString(), // uploadDateRaw
+      DateTime.now(), // publishDate
+      '', // description
+      null, // duration
+      ThumbnailSet(s['id'].toString()), // thumbnails
+      const [], // keywords
+      Engagement(0, 0, 0), // engagement
+      false, // isLive
+    )).toList();
+
+    for (int i = 0; i < initialIndex; i++) {
+      historyStack.add(playlistVideos[i]);
+    }
+    for (int i = initialIndex + 1; i < playlistVideos.length; i++) {
+      queue.add(playlistVideos[i]);
+    }
+
+    // 2. 셔플 모드라면 대기열 셔플
+    if (isShuffle.value) {
+      queue.shuffle();
+    }
+
+    // 3. 선택된 곡 재생
+    if (kDebugMode) print('Playing initial song: ${playlistVideos[initialIndex].title}');
+    await playVideo(playlistVideos[initialIndex], isFromQueue: true);
+  }
+
+  void toggleShuffle() {
+    isShuffle.value = !isShuffle.value;
+    if (isShuffle.value && queue.isNotEmpty) {
+      queue.shuffle();
+    }
+    _saveCurrentState(); // 상태 저장 강제 호출
+    Get.snackbar(
+      '셔플', 
+      isShuffle.value ? '셔플 모드가 켜졌습니다.' : '셔플 모드가 꺼졌습니다.',
+      snackPosition: SnackPosition.TOP,
+      backgroundColor: const Color(0xFF1DB954).withOpacity(0.8),
+      colorText: Colors.white,
+      duration: const Duration(seconds: 1),
+    );
+  }
+
+  void toggleRepeat() {
+    repeatMode.value = (repeatMode.value + 1) % 3;
+    _saveCurrentState();
+    String msg = '';
+    if (repeatMode.value == 0) msg = '반복 재생 안 함';
+    if (repeatMode.value == 1) msg = '한 곡 반복 중';
+    if (repeatMode.value == 2) msg = '전체 반복 중';
+
+    Get.snackbar(
+      '반복 재생', 
+      msg,
+      snackPosition: SnackPosition.TOP,
+      backgroundColor: const Color(0xFF1DB954).withOpacity(0.8),
+      colorText: Colors.white,
+      duration: const Duration(seconds: 1),
+    );
+  }
+
+  void _saveCurrentState() {
+    if (currentVideo.value != null) {
+      _addToRecentlyPlayed(currentVideo.value!);
     }
   }
 

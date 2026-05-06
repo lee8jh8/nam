@@ -4,11 +4,13 @@ import 'app/routes/app_pages.dart';
 import 'app/translations/app_translations.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:audio_session/audio_session.dart';
+import 'app/bindings/global_binding.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Hive.initFlutter();
   await Hive.openBox('settings');
+  await Hive.openBox('playlists');
   
   // 백그라운드 오디오 재생을 위한 AudioSession 설정
   final session = await AudioSession.instance;
@@ -24,6 +26,7 @@ class MusicApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return GetMaterialApp(
       title: 'Sonic Flow',
+      initialBinding: GlobalBinding(),
       themeMode: ThemeMode.dark,
       darkTheme: ThemeData(
         brightness: Brightness.dark,
