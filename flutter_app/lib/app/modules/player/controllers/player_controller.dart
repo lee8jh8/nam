@@ -37,15 +37,14 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
   var historyStack = <Video>[].obs;
   
   bool _isFetchingQueue = false;
+  String? _currentFetchId; // 비동기 작업 취소를 위한 현재 작업 ID
   Timer? _loadingTimer;
 
   void _startLoadingProgress() {
     loadingPercent.value = 0;
     _loadingTimer?.cancel();
     _loadingTimer = Timer.periodic(const Duration(milliseconds: 100), (timer) {
-      if (loadingPercent.value < 90) {
-        loadingPercent.value += 3;
-      }
+      if (loadingPercent.value < 90) loadingPercent.value += 3;
     });
   }
 
@@ -54,7 +53,6 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     loadingPercent.value = 100;
   }
 
-  @override
   @override
   void onInit() {
     super.onInit();
@@ -193,50 +191,159 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
   }
 
   Future<void> _fetchRelatedAndFillQueue(Video video) async {
-    if (_isFetchingQueue) return;
+    final String fetchId = DateTime.now().millisecondsSinceEpoch.toString();
+    _currentFetchId = fetchId;
     _isFetchingQueue = true;
 
-    final historyIds = historyStack.map((e) => e.id.value).toSet();
-    final queueIds = queue.map((e) => e.id.value).toSet();
-    final excludeIds = {...historyIds, ...queueIds, video.id.value};
-
     try {
-      final trackName = video.parsedSongName;
-      final artistName = video.parsedArtist;
-      if (trackName.isNotEmpty && artistName.isNotEmpty) {
-        final similarTracks = await _lastFmService.getSimilarTracks(trackName, artistName, limit: 10);
-        if (similarTracks.isNotEmpty) {
-          final List<Video> foundVideos = [];
-          for (final track in similarTracks) {
-            if (foundVideos.length >= 5) break;
-            try {
-              final query = '${track.name} ${track.artist}';
-              final results = await _ytService.searchSongs(query);
-              final filtered = results.where((v) => v.duration != null && v.duration!.inMinutes < 10 && !excludeIds.contains(v.id.value)).toList();
-              if (filtered.isNotEmpty) {
-                foundVideos.add(filtered.first);
-                excludeIds.add(filtered.first.id.value);
-              }
-            } catch (_) {}
+      if (kDebugMode) print('[PlayerController] Starting new fetch task: $fetchId for ${video.title}');
+
+      // 무한히 늘어나는 히스토리 때문에 검색 결과가 모두 걸러지는 현상 방지 (최근 20개만 제외)
+      final historyIds = historyStack.length > 20 
+          ? historyStack.sublist(historyStack.length - 20).map((e) => e.id.value).toSet() 
+          : historyStack.map((e) => e.id.value).toSet();
+          
+      final queueIds = queue.map((e) => e.id.value).toSet();
+      final excludeIds = {...historyIds, ...queueIds, video.id.value};
+      
+      final queuedSongNames = <String>{video.parsedSongName.toLowerCase()};
+
+      // 1. 1순위: YouTube 연관 동영상 (알고리즘 추천)
+      try {
+        var related = await _ytService.getRelatedVideos(video);
+        if (_currentFetchId != fetchId) return;
+        
+        for (var v in related) {
+          if (_currentFetchId != fetchId) return;
+          if (queue.length >= 10) break;
+          if (v.duration == null || excludeIds.contains(v.id.value)) continue;
+          
+          final sName = v.parsedSongName.toLowerCase();
+          bool isDuplicate = false;
+          for (var existing in queuedSongNames) {
+            if (existing.contains(sName) || sName.contains(existing)) {
+              isDuplicate = true;
+              break;
+            }
           }
-          if (foundVideos.isNotEmpty) {
-            queue.addAll(foundVideos);
-            _isFetchingQueue = false;
-            return;
-          }
+          if (isDuplicate) continue;
+
+          queue.add(v);
+          excludeIds.add(v.id.value);
+          queuedSongNames.add(sName);
         }
-      }
-    } catch (_) {}
+        if (kDebugMode && queue.length > queueIds.length) print('[PlayerController] Queue replenished from Related: ${queue.length} items');
+      } catch (_) {}
 
-    try {
-      var related = await _ytService.getRelatedVideos(video);
-      related.removeWhere((v) => excludeIds.contains(v.id.value));
-      if (related.isNotEmpty) {
-        queue.addAll(related.take(5));
-      }
-    } catch (_) {}
+      if (_currentFetchId != fetchId) return;
 
-    _isFetchingQueue = false;
+      // 2. 2순위: LastFM API를 통한 음악적 유사 곡 추천
+      if (queue.length < 10) {
+        try {
+          final trackName = video.parsedSongName;
+          final artistName = video.parsedArtist;
+          if (trackName.isNotEmpty && artistName.isNotEmpty) {
+            var similarTracks = await _lastFmService.getSimilarTracks(trackName, artistName, limit: 10);
+            if (_currentFetchId != fetchId) return;
+            
+            if (similarTracks.isEmpty) {
+              final similarArtists = await _lastFmService.getSimilarArtists(artistName, limit: 3);
+              if (_currentFetchId != fetchId) return;
+              for (var artist in similarArtists) {
+                final topTracks = await _lastFmService.getArtistTopTracks(artist, limit: 2);
+                similarTracks.addAll(topTracks);
+              }
+              if (similarTracks.isEmpty) {
+                similarTracks = await _lastFmService.getArtistTopTracks(artistName, limit: 10);
+              }
+              similarTracks.shuffle();
+            }
+
+            if (similarTracks.isNotEmpty) {
+              for (final track in similarTracks) {
+                if (_currentFetchId != fetchId) return;
+                if (queue.length >= 10) break;
+                
+                bool isDuplicate = false;
+                final qName = track.name.toLowerCase();
+                for (var existing in queuedSongNames) {
+                  if (existing.contains(qName) || qName.contains(existing)) {
+                    isDuplicate = true;
+                    break;
+                  }
+                }
+                if (isDuplicate) continue;
+
+                try {
+                  final query = '${track.name} ${track.artist} music';
+                  final results = await _ytService.searchSongs(query);
+                  if (_currentFetchId != fetchId) return;
+                  
+                  final filtered = results.where((v) {
+                    if (v.duration == null || excludeIds.contains(v.id.value)) return false;
+                    final s = v.duration!.inSeconds;
+                    return s >= 120 && s < 540;
+                  }).toList();
+                  
+                  if (filtered.isNotEmpty) {
+                    if (_currentFetchId != fetchId) return;
+                    queue.add(filtered.first);
+                    excludeIds.add(filtered.first.id.value);
+                    queuedSongNames.add(qName);
+                  }
+                } catch (_) {}
+              }
+              if (kDebugMode) print('[PlayerController] Queue replenished from LastFM: ${queue.length} items');
+            }
+          }
+        } catch (_) {}
+      }
+
+      if (_currentFetchId != fetchId) return;
+
+      // 3. 3순위: 영상 파싱 정보(가수, 제목) + 채널명을 조합한 유튜브 검색
+      if (queue.length < 10) {
+        try {
+          String channelName = video.author.replaceAll(RegExp(r'(- Topic|Topic|VEVO|Official)', caseSensitive: false), '').trim();
+          final query = '${video.parsedArtist} ${video.parsedSongName} $channelName music'.trim();
+          
+          if (query.isNotEmpty && query != 'music') {
+            var searchResults = await _ytService.searchSongs(query);
+            if (_currentFetchId != fetchId) return;
+            
+            var fallback = searchResults.where((v) {
+              if (v.duration == null || excludeIds.contains(v.id.value)) return false;
+              final s = v.duration!.inSeconds;
+              return s >= 120 && s < 540;
+            }).toList();
+            
+            for (var v in fallback) {
+              if (_currentFetchId != fetchId) return;
+              if (queue.length >= 10) break;
+              
+              final sName = v.parsedSongName.toLowerCase();
+              bool isDuplicate = false;
+              for (var existing in queuedSongNames) {
+                if (existing.contains(sName) || sName.contains(existing)) {
+                  isDuplicate = true;
+                  break;
+                }
+              }
+              if (isDuplicate) continue;
+
+              queue.add(v);
+              excludeIds.add(v.id.value);
+              queuedSongNames.add(sName);
+            }
+            if (kDebugMode) print('[PlayerController] Queue replenished from Fallback search: ${queue.length} items');
+          }
+        } catch (_) {}
+      }
+    } finally {
+      if (_currentFetchId == fetchId) {
+        _isFetchingQueue = false;
+      }
+    }
   }
 
   Future<void> playNext() async {
@@ -248,24 +355,16 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
       return;
     }
 
+    if (queue.isEmpty && !isPlaylistMode.value) {
+      await _fetchRelatedAndFillQueue(currentVideo.value!);
+    }
+
     if (queue.isNotEmpty) {
       var nextVideo = queue.removeAt(0);
       if (currentVideo.value != null) {
         historyStack.add(currentVideo.value!);
       }
       await playVideo(nextVideo, isFromQueue: true);
-      if (!isPlaylistMode.value && queue.length < 3) {
-        _fetchRelatedAndFillQueue(nextVideo);
-      }
-    } else if (!isPlaylistMode.value) {
-      await _fetchRelatedAndFillQueue(currentVideo.value!);
-      if (queue.isNotEmpty) {
-        var nextVideo = queue.removeAt(0);
-        if (currentVideo.value != null) {
-          historyStack.add(currentVideo.value!);
-        }
-        await playVideo(nextVideo, isFromQueue: true);
-      }
     } else if (isPlaylistMode.value && repeatMode.value == 2) {
       final allSongs = [...historyStack, currentVideo.value!];
       historyStack.clear();
@@ -294,7 +393,7 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
   Future<void> playVideo(Video video, {bool isFromQueue = false}) async {
     if (kDebugMode) print('[PlayerController] playVideo requested for: ${video.id.value}');
     
-    if (currentVideo.value?.id.value == video.id.value && audioPlayer.audioSource != null) {
+    if (currentVideo.value?.id.value == video.id.value && audioPlayer.audioSource != null && !isFromQueue) {
       await audioPlayer.seek(Duration.zero);
       audioPlayer.play();
       return;
@@ -310,9 +409,15 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
         historyStack.add(currentVideo.value!);
       }
       queue.clear();
+      _currentFetchId = null;
       isPlaylistMode.value = false;
       playbackMode.value = '자동 재생';
       _fetchRelatedAndFillQueue(video);
+    } else {
+      // 대기열에서 곡을 선택했더라도, 남은 개수가 적으면 미리 보충
+      if (!isPlaylistMode.value && queue.length < 10) {
+        _fetchRelatedAndFillQueue(video);
+      }
     }
 
     try {
@@ -492,12 +597,14 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     var box = Hive.box('playlists');
     var data = box.get(playlistKey);
     if (data == null) return;
+    
     var p = Map<String, dynamic>.from(data);
-    List songs = List.from(p['songs'] ?? []);
-    if (songs.length >= 100) {
-      Get.rawSnackbar(message: '최대 100곡까지 등록 가능합니다.');
+    var songs = List<Map>.from(p['songs'] ?? []);
+    if (songs.any((s) => s['id'] == video.id.value)) {
+      Get.rawSnackbar(title: '이미 있음', message: '이미 플레이리스트에 있는 곡입니다.', backgroundColor: Colors.orange);
       return;
     }
+
     songs.add({'id': video.id.value, 'title': video.title, 'author': video.author});
     p['songs'] = songs;
     box.put(playlistKey, p);
@@ -506,17 +613,15 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
 
   void toggleShuffle() {
     isShuffle.value = !isShuffle.value;
-    if (isShuffle.value && queue.isNotEmpty) queue.shuffle();
+    if (isShuffle.value) {
+      queue.shuffle();
+    }
     _saveCurrentState();
   }
 
   void toggleRepeat() {
     repeatMode.value = (repeatMode.value + 1) % 3;
     _saveCurrentState();
-  }
-
-  void _saveCurrentState() {
-    if (currentVideo.value != null) _addToRecentlyPlayed(currentVideo.value!);
   }
 
   void togglePlay() {
@@ -544,30 +649,25 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     }
   }
 
+  void _saveCurrentState() {
+    if (currentVideo.value != null) _addToRecentlyPlayed(currentVideo.value!);
+  }
+
   @override
   void onClose() {
     WidgetsBinding.instance.removeObserver(this);
-    _ytService.dispose();
+    _loadingTimer?.cancel();
     super.onClose();
   }
 }
 
-extension VideoTitleParsing on Video {
+extension VideoParsing on Video {
   String get parsedTitle {
-    String raw = title.replaceAll(RegExp(r'(\[.*?\]|\(.*?\)|【.*?】|MV|Official|Video|Audio|Lyrics|가사|Music)', caseSensitive: false), '').trim();
-    if (raw.isEmpty) return title;
-    if (raw.contains(RegExp(r'\s-\s'))) return raw;
-    if (raw.contains('-')) {
-      var parts = raw.split('-');
-      return '${parts[0].trim()} - ${parts.sublist(1).join('-').trim()}';
-    }
-    String auth = author.replaceAll(RegExp(r'(- Topic|Topic|VEVO|Official)', caseSensitive: false), '').trim();
-    if (auth.isEmpty || raw.toLowerCase().contains(auth.toLowerCase())) return raw;
-    return '$auth - $raw';
+    return title.replaceAll(RegExp(r'(\[.*?\]|\(.*?\)|【.*?】|MV|Official|Video|Audio|Lyrics|가사|Music)', caseSensitive: false), '').trim();
   }
   String get parsedArtist {
     String pt = parsedTitle;
-    if (pt == title || pt.isEmpty) return author;
+    if (pt.contains(' - ')) return pt.split(' - ')[0].trim();
     if (pt.contains('-')) return pt.split('-')[0].trim();
     return author.replaceAll(RegExp(r'(- Topic|Topic|VEVO|Official)', caseSensitive: false), '').trim();
   }

@@ -85,8 +85,9 @@ class YouTubeService {
   Future<List<Video>> getRelatedVideos(Video video) async {
     try {
       var related = await _yt.videos.getRelatedVideos(video);
-      if (related == null) return [];
-      return related.where((v) {
+      List<Video> results = related?.toList() ?? [];
+      
+      return results.where((v) {
         if (v.duration == null) return false;
         final s = v.duration!.inSeconds;
         return s >= 120 && s < 540;

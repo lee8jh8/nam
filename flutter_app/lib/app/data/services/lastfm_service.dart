@@ -59,6 +59,67 @@ class LastFmService {
     }
   }
 
+  /// 특정 가수와 유사한 가수 목록을 가져옴 (artist.getSimilar)
+  Future<List<String>> getSimilarArtists(String artistName, {int limit = 5}) async {
+    try {
+      final uri = Uri.parse(_baseUrl).replace(queryParameters: {
+        'method': 'artist.getSimilar',
+        'artist': artistName,
+        'api_key': _apiKey,
+        'format': 'json',
+        'limit': limit.toString(),
+        'autocorrect': '1',
+      });
+
+      final response = await http.get(uri).timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) return [];
+
+      final data = json.decode(response.body);
+      final artists = data['similarartists']?['artist'] as List?;
+      if (artists == null) return [];
+
+      return artists.map((a) => a['name'].toString()).toList();
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /// 특정 가수의 인기 트랙 목록을 가져옴 (artist.getTopTracks)
+  Future<List<LastFmTrack>> getArtistTopTracks(String artistName, {int limit = 10}) async {
+    try {
+      final uri = Uri.parse(_baseUrl).replace(queryParameters: {
+        'method': 'artist.getTopTracks',
+        'artist': artistName,
+        'api_key': _apiKey,
+        'format': 'json',
+        'limit': limit.toString(),
+        'autocorrect': '1',
+      });
+
+      final response = await http.get(uri).timeout(const Duration(seconds: 10));
+      if (response.statusCode != 200) return [];
+
+      final data = json.decode(response.body);
+      final tracks = data['toptracks']?['track'] as List?;
+      if (tracks == null) return [];
+
+      return tracks.map((t) {
+        String? img;
+        final images = t['image'] as List?;
+        if (images != null && images.isNotEmpty) {
+          img = images.last['#text'];
+        }
+        return LastFmTrack(
+          name: t['name'] ?? '',
+          artist: t['artist']?['name'] ?? '',
+          imageUrl: img,
+        );
+      }).toList();
+    } catch (e) {
+      return [];
+    }
+  }
+
   /// 특정 국가의 인기 트랙을 가져옴 (geo.getTopTracks) - 페이지네이션 지원
   Future<List<LastFmTrack>> getTopTracksByCountry(String country, {int limit = 20, int page = 1}) async {
     try {
