@@ -85,11 +85,13 @@ class HomeView extends StatelessWidget {
           Obx(() {
             if (playerController.useWebViewFallback.value && playerController.ytWebController != null) {
               return Positioned(
-                bottom: -100, right: -100,
-                width: 10, height: 10,
+                top: 0, left: 0,
+                width: 1, height: 1,
                 child: Opacity(
                   opacity: 0.01,
-                  child: YoutubePlayer(controller: playerController.ytWebController!),
+                  child: IgnorePointer(
+                    child: YoutubePlayer(controller: playerController.ytWebController!),
+                  ),
                 ),
               );
             }

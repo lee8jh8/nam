@@ -52,7 +52,12 @@ class SearchControllerCustom extends GetxController {
     try {
       _currentSearchList = await _ytService.searchSongs(query);
       if (_currentSearchList != null) {
-        searchResults.assignAll(_currentSearchList!);
+        final filtered = _currentSearchList!.where((v) {
+          if (v.duration == null) return false;
+          final s = v.duration!.inSeconds;
+          return s >= 120 && s < 540;
+        }).toList();
+        searchResults.assignAll(filtered);
       }
     } catch (e) {
       print('[Search] Error: $e');
@@ -70,7 +75,12 @@ class SearchControllerCustom extends GetxController {
       final nextResults = await _currentSearchList!.nextPage();
       if (nextResults != null) {
         _currentSearchList = nextResults;
-        searchResults.addAll(nextResults);
+        final filtered = nextResults.where((v) {
+          if (v.duration == null) return false;
+          final s = v.duration!.inSeconds;
+          return s >= 120 && s < 540;
+        }).toList();
+        searchResults.addAll(filtered);
       }
     } catch (e) {
       print('[Search] Load More Error: $e');

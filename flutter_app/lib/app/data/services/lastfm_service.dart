@@ -20,7 +20,7 @@ class LastFmTrack {
 
 class LastFmService {
   static const String _apiKey = 'c702be6f5c40de7edebfe9775a077461';
-  static const String _baseUrl = 'http://ws.audioscrobbler.com/2.0/';
+  static const String _baseUrl = 'https://ws.audioscrobbler.com/2.0/';
 
   /// 현재 곡과 유사한 트랙 목록을 Last.fm에서 가져옴 (track.getSimilar)
   Future<List<LastFmTrack>> getSimilarTracks(String trackName, String artistName, {int limit = 10}) async {

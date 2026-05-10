@@ -4,7 +4,11 @@ import 'app/routes/app_pages.dart';
 import 'app/translations/app_translations.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:audio_session/audio_session.dart';
+import 'package:audio_service/audio_service.dart';
 import 'app/bindings/global_binding.dart';
+import 'app/data/services/audio_handler.dart';
+
+late MyAudioHandler audioHandler;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -15,6 +19,28 @@ void main() async {
   // 백그라운드 오디오 재생을 위한 AudioSession 설정
   final session = await AudioSession.instance;
   await session.configure(const AudioSessionConfiguration.music());
+  
+  // 오디오 포커스 중단 시 대응 (전화, 타 앱 재생 등)
+  session.interruptionEventStream.listen((event) {
+    if (event.begin) {
+       audioHandler.pause();
+    } else {
+       if (event.type == AudioInterruptionType.pause) {
+         audioHandler.play();
+       }
+    }
+  });
+
+  // AudioService 초기화
+  audioHandler = await AudioService.init(
+    builder: () => MyAudioHandler(),
+    config: const AudioServiceConfig(
+      androidNotificationChannelId: 'com.nam.music.music_app.channel.audio',
+      androidNotificationChannelName: 'Music Playback',
+      androidNotificationOngoing: true,
+      androidStopForegroundOnPause: true,
+    ),
+  );
   
   runApp(const MusicApp());
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import 'package:get/get.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -24,7 +25,10 @@ class HomeController extends GetxController {
   void onInit() {
     super.onInit();
     loadRecentPlayed();
-    fetchTrending();
+    // 첫 프레임 렌더링 후 데이터를 가져오도록 지연시켜 네이티브 서비스 초기화와 충돌 방지
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      fetchTrending();
+    });
   }
 
   void loadRecentPlayed() {

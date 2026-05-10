@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:audio_service/audio_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -6,12 +7,13 @@ import 'package:just_audio/just_audio.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:youtube_player_iframe/youtube_player_iframe.dart' as yt_iframe;
+import '../../../../main.dart';
 import '../../../data/services/youtube_service.dart';
 import '../../../data/services/lastfm_service.dart';
 import '../../home/controllers/home_controller.dart';
 
 class PlayerController extends GetxController with WidgetsBindingObserver {
-  final AudioPlayer audioPlayer = AudioPlayer();
+  final AudioPlayer audioPlayer = audioHandler.player;
   final YouTubeService _ytService = YouTubeService();
   final LastFmService _lastFmService = LastFmService();
   
@@ -34,7 +36,6 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
   var queue = <Video>[].obs;
   var historyStack = <Video>[].obs;
   
-  bool _cancelCurrentLoad = false;
   bool _isFetchingQueue = false;
   Timer? _loadingTimer;
 
@@ -54,30 +55,69 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
   }
 
   @override
+  @override
   void onInit() {
     super.onInit();
     WidgetsBinding.instance.addObserver(this);
+
+    audioHandler.nextRequests.listen((_) => playNext());
+    audioHandler.prevRequests.listen((_) => playPrevious());
+
     audioPlayer.playerStateStream.listen((state) {
-      // WebView 폴백 모드일 때는 네이티브 플레이어 상태 변경을 무시
       if (useWebViewFallback.value) return;
       isPlaying.value = state.playing;
-      // 곡 재생이 끝나면 자동으로 다음 곡 재생
-      if (state.processingState == ProcessingState.completed) {
-        playNext();
-      }
-    });
-    audioPlayer.positionStream.listen((pos) {
-      position.value = pos;
-    });
-    audioPlayer.durationStream.listen((dur) {
-      duration.value = dur ?? Duration.zero;
     });
 
-    // 마지막으로 재생한 곡 복원
+    audioPlayer.durationStream.listen((dur) {
+      if (!useWebViewFallback.value) duration.value = dur ?? Duration.zero;
+    });
+
+    audioPlayer.positionStream.listen((pos) {
+      if (!useWebViewFallback.value) position.value = pos;
+    });
+
     _restoreLastPlayed();
   }
 
-  void _restoreLastPlayed() {
+  Future<AudioSource?> _createAudioSource(Video video, {bool useHeaders = true}) async {
+    try {
+      final urls = await _ytService.getAudioStreamUrls(video.id.value);
+      if (urls.isEmpty) {
+        if (kDebugMode) print('[PlayerController] No audio streams found. Video might be restricted.');
+        return null;
+      }
+
+      final mediaItem = MediaItem(
+        id: video.id.value,
+        album: video.author,
+        title: video.title,
+        artist: video.author,
+        duration: video.duration,
+        artUri: video.thumbnails.highResUrl.isNotEmpty ? Uri.parse(video.thumbnails.highResUrl) : null,
+      );
+
+      if (useHeaders) {
+        return AudioSource.uri(
+          Uri.parse(urls.first),
+          headers: const {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1',
+          },
+          tag: mediaItem,
+        );
+      } else {
+        return AudioSource.uri(
+          Uri.parse(urls.first),
+          tag: mediaItem,
+        );
+      }
+    } catch (e) {
+      if (kDebugMode) print('[PlayerController] Error creating audio source: $e');
+      return null;
+    }
+  }
+
+  Future<void> _restoreLastPlayed() async {
+    if (kDebugMode) print('[PlayerController] Restoring last played track...');
     var box = Hive.box('settings');
     var lastPlayed = box.get('last_played');
     if (lastPlayed != null && lastPlayed is Map) {
@@ -88,25 +128,37 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
         repeatMode.value = lastPlayed['repeatMode'] ?? 0;
         isShuffle.value = lastPlayed['isShuffle'] ?? false;
 
-        // 루프 모드 동기화
-        if (repeatMode.value == 1) {
-          audioPlayer.setLoopMode(LoopMode.one);
-        } else {
-          audioPlayer.setLoopMode(LoopMode.off);
-        }
+        audioPlayer.setLoopMode(repeatMode.value == 1 ? LoopMode.one : LoopMode.off);
 
-        // 대기열 복원
         List? savedQueue = lastPlayed['queue'];
         if (savedQueue != null) {
           queue.assignAll(savedQueue.map((e) => _mapToVideo(e)).toList());
         }
 
-        // 히스토리 복원
         List? savedHistory = lastPlayed['history'];
         if (savedHistory != null) {
           historyStack.assignAll(savedHistory.map((e) => _mapToVideo(e)).toList());
         }
-      } catch (_) {}
+
+        if (currentVideo.value != null) {
+          AudioSource? source = await _createAudioSource(currentVideo.value!, useHeaders: true);
+          if (source != null) {
+            try {
+              await audioPlayer.setAudioSource(source, preload: true);
+            } catch (_) {
+              source = await _createAudioSource(currentVideo.value!, useHeaders: false);
+              if (source != null) {
+                await audioPlayer.setAudioSource(source, preload: true);
+              }
+            }
+            if (source != null) {
+              audioHandler.updateCurrentMediaItem((source as UriAudioSource).tag as MediaItem);
+            }
+          }
+        }
+      } catch (e) {
+        if (kDebugMode) print('[PlayerController] Error restoring last played: $e');
+      }
     }
   }
 
@@ -135,9 +187,7 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
       bool bgPlayEnabled = box.get('bg_play_enabled', defaultValue: true);
       if (!bgPlayEnabled) {
         if (audioPlayer.playing) audioPlayer.pause();
-        if (useWebViewFallback.value && ytWebController != null && isPlaying.value) {
-          ytWebController!.pauseVideo();
-        }
+        if (ytWebController != null && isPlaying.value) ytWebController!.pauseVideo();
       }
     }
   }
@@ -150,36 +200,25 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     final queueIds = queue.map((e) => e.id.value).toSet();
     final excludeIds = {...historyIds, ...queueIds, video.id.value};
 
-    // 1순위: Last.fm 유사 트랙 기반 추천
     try {
       final trackName = video.parsedSongName;
       final artistName = video.parsedArtist;
-
       if (trackName.isNotEmpty && artistName.isNotEmpty) {
         final similarTracks = await _lastFmService.getSimilarTracks(trackName, artistName, limit: 10);
-
         if (similarTracks.isNotEmpty) {
           final List<Video> foundVideos = [];
-
           for (final track in similarTracks) {
             if (foundVideos.length >= 5) break;
             try {
               final query = '${track.name} ${track.artist}';
               final results = await _ytService.searchSongs(query);
-              final filtered = results.where((v) =>
-                v.duration != null &&
-                v.duration!.inMinutes < 10 &&
-                !excludeIds.contains(v.id.value)
-              ).toList();
-
+              final filtered = results.where((v) => v.duration != null && v.duration!.inMinutes < 10 && !excludeIds.contains(v.id.value)).toList();
               if (filtered.isNotEmpty) {
                 foundVideos.add(filtered.first);
                 excludeIds.add(filtered.first.id.value);
-                if (kDebugMode) print('[LastFM] Queued: ${track.artist} - ${track.name}');
               }
             } catch (_) {}
           }
-
           if (foundVideos.isNotEmpty) {
             queue.addAll(foundVideos);
             _isFetchingQueue = false;
@@ -187,62 +226,13 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
           }
         }
       }
-    } catch (e) {
-      if (kDebugMode) print('[LastFM] Failed to get similar tracks: $e');
-    }
+    } catch (_) {}
 
-    // 2순위: YouTube 연관 영상
     try {
       var related = await _ytService.getRelatedVideos(video);
       related.removeWhere((v) => excludeIds.contains(v.id.value));
       if (related.isNotEmpty) {
         queue.addAll(related.take(5));
-        _isFetchingQueue = false;
-        return;
-      }
-    } catch (_) {}
-
-    // 3순위: 아티스트 이름으로 YouTube 검색
-    try {
-      var artist = video.parsedArtist;
-      if (artist.isNotEmpty) {
-        var searchResults = await _ytService.searchSongs(artist);
-        searchResults.removeWhere((v) => excludeIds.contains(v.id.value));
-        if (searchResults.isNotEmpty) {
-          searchResults.shuffle();
-          queue.addAll(searchResults.take(10));
-          _isFetchingQueue = false;
-          return;
-        }
-      }
-    } catch (_) {}
-
-    // 4순위: 홈 인기곡 폴백 (Last.fm 차트 기반)
-    try {
-      if (Get.isRegistered<HomeController>()) {
-        final trending = Get.find<HomeController>().trendingSongs.toList();
-        if (trending.isNotEmpty) {
-          trending.shuffle();
-          int count = 0;
-          for (final track in trending) {
-            if (count >= 3) break; // 성능을 위해 최대 3곡만 검색해서 추가
-            try {
-              final query = '${track.name} ${track.artist}';
-              final results = await _ytService.searchSongs(query);
-              final filtered = results.where((v) => 
-                v.duration != null && 
-                v.duration!.inMinutes < 10 && 
-                !excludeIds.contains(v.id.value)
-              ).toList();
-              
-              if (filtered.isNotEmpty) {
-                queue.add(filtered.first);
-                excludeIds.add(filtered.first.id.value);
-                count++;
-              }
-            } catch (_) {}
-          }
-        }
       }
     } catch (_) {}
 
@@ -252,89 +242,145 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
   Future<void> playNext() async {
     if (currentVideo.value == null) return;
 
-    // 한곡 반복 모드인 경우: seek(0)만 수행하여 데이터 재로딩 방지
     if (repeatMode.value == 1) {
-      if (kDebugMode) print('Repeat One mode: Seeking to zero');
-      if (useWebViewFallback.value && ytWebController != null) {
-        ytWebController!.seekTo(seconds: 0.0);
-        ytWebController!.playVideo();
-      } else {
-        await audioPlayer.seek(Duration.zero);
-        audioPlayer.play();
-      }
+      await audioPlayer.seek(Duration.zero);
+      audioPlayer.play();
       return;
     }
 
-    if (currentVideo.value != null) {
-      historyStack.add(currentVideo.value!);
-    }
-    
     if (queue.isNotEmpty) {
       var nextVideo = queue.removeAt(0);
+      if (currentVideo.value != null) {
+        historyStack.add(currentVideo.value!);
+      }
       await playVideo(nextVideo, isFromQueue: true);
-      // 재생목록 모드에서는 큐를 자동으로 채우지 않음
       if (!isPlaylistMode.value && queue.length < 3) {
         _fetchRelatedAndFillQueue(nextVideo);
       }
-    } else {
-      // 재생목록 전체 반복 모드인 경우
-      if (isPlaylistMode.value && repeatMode.value == 2) {
-        // 히스토리에 쌓인 곡들을 다시 큐로 옮기고 처음부터 재생
-        final allSongs = [...historyStack];
-        historyStack.clear();
-        final firstVideo = allSongs.removeAt(0);
-        queue.assignAll(allSongs);
-        await playVideo(firstVideo, isFromQueue: true);
-        return;
-      }
-
-      // 재생목록이 끝났으면 자동 재생 모드로 전환
-      if (isPlaylistMode.value) {
-        isPlaylistMode.value = false;
-        playbackMode.value = '자동 재생';
-      }
-      
-      if (currentVideo.value != null) {
-        await _fetchRelatedAndFillQueue(currentVideo.value!);
-        if (queue.isNotEmpty) {
-          var nextVideo = queue.removeAt(0);
-          await playVideo(nextVideo, isFromQueue: true);
+    } else if (!isPlaylistMode.value) {
+      await _fetchRelatedAndFillQueue(currentVideo.value!);
+      if (queue.isNotEmpty) {
+        var nextVideo = queue.removeAt(0);
+        if (currentVideo.value != null) {
+          historyStack.add(currentVideo.value!);
         }
+        await playVideo(nextVideo, isFromQueue: true);
+      }
+    } else if (isPlaylistMode.value && repeatMode.value == 2) {
+      final allSongs = [...historyStack, currentVideo.value!];
+      historyStack.clear();
+      queue.assignAll(allSongs);
+      if (queue.isNotEmpty) {
+        await playVideo(queue.removeAt(0), isFromQueue: true);
       }
     }
   }
 
   Future<void> playPrevious() async {
-    // 3초 이상 재생되었으면 현재 곡의 처음으로 이동 (재로딩/데이터 재요청 없음)
     if (position.value > const Duration(seconds: 3)) {
-      if (useWebViewFallback.value && ytWebController != null) {
-        ytWebController!.seekTo(seconds: 0.0);
-      } else {
-        await audioPlayer.seek(Duration.zero);
-      }
+      await audioPlayer.seek(Duration.zero);
       return;
     }
 
-    // 3초 미만이면 이전 곡 재생
     if (historyStack.isNotEmpty) {
       var prevVideo = historyStack.removeLast();
       if (currentVideo.value != null) {
         queue.insert(0, currentVideo.value!);
       }
       await playVideo(prevVideo, isFromQueue: true);
-    } else {
-      // 이전 곡이 없으면 무조건 처음으로 이동
-      if (useWebViewFallback.value && ytWebController != null) {
-        ytWebController!.seekTo(seconds: 0.0);
-      } else {
-        await audioPlayer.seek(Duration.zero);
-      }
     }
   }
 
+  Future<void> playVideo(Video video, {bool isFromQueue = false}) async {
+    if (kDebugMode) print('[PlayerController] playVideo requested for: ${video.id.value}');
+    
+    if (currentVideo.value?.id.value == video.id.value && audioPlayer.audioSource != null) {
+      await audioPlayer.seek(Duration.zero);
+      audioPlayer.play();
+      return;
+    }
+
+    isLoading.value = true;
+    _startLoadingProgress();
+    isPlaying.value = false;
+    currentVideo.value = video;
+
+    if (!isFromQueue) {
+      if (currentVideo.value != null && currentVideo.value != video) {
+        historyStack.add(currentVideo.value!);
+      }
+      queue.clear();
+      isPlaylistMode.value = false;
+      playbackMode.value = '자동 재생';
+      _fetchRelatedAndFillQueue(video);
+    }
+
+    try {
+      await audioPlayer.stop();
+      if (ytWebController != null) ytWebController!.stopVideo();
+    } catch (_) {}
+    useWebViewFallback.value = false;
+
+    bool success = false;
+    AudioSource? source = await _createAudioSource(video, useHeaders: true);
+
+    if (source != null) {
+      try {
+        if (kDebugMode) print('[PlayerController] Attempting native play with headers...');
+        await Future.delayed(const Duration(milliseconds: 200));
+        await audioPlayer.setAudioSource(source, initialPosition: Duration.zero);
+        audioPlayer.play();
+        
+        success = true;
+        _addToRecentlyPlayed(video);
+        audioHandler.updateCurrentMediaItem((source as UriAudioSource).tag as MediaItem);
+      } catch (e) {
+        if (kDebugMode) print('[PlayerController] Native play attempt failed with headers: $e');
+        
+        source = await _createAudioSource(video, useHeaders: false);
+        if (source != null) {
+          try {
+            if (kDebugMode) print('[PlayerController] Attempting native play without headers...');
+            await audioPlayer.setAudioSource(source, initialPosition: Duration.zero);
+            audioPlayer.play();
+            
+            success = true;
+            _addToRecentlyPlayed(video);
+            audioHandler.updateCurrentMediaItem((source as UriAudioSource).tag as MediaItem);
+          } catch (e2) {
+            if (kDebugMode) print('[PlayerController] Native play attempt failed without headers: $e2');
+            await audioPlayer.stop();
+          }
+        }
+      }
+    }
+
+    if (!success) {
+      if (kDebugMode) print('[PlayerController] Native attempt failed. Switching to WebView.');
+      _initWebViewFallback(video.id.value);
+      _addToRecentlyPlayed(video);
+      isPlaying.value = true;
+
+      final mediaItem = MediaItem(
+        id: video.id.value,
+        album: video.author,
+        title: video.title,
+        artist: video.author,
+        duration: video.duration,
+        artUri: video.thumbnails.highResUrl.isNotEmpty ? Uri.parse(video.thumbnails.highResUrl) : null,
+      );
+      audioHandler.updateCurrentMediaItem(mediaItem);
+    }
+
+    _stopLoadingProgress();
+    isLoading.value = false;
+  }
+
   void _initWebViewFallback(String videoId) {
+    if (kDebugMode) print('[Iframe] Init requested for videoId: $videoId');
     useWebViewFallback.value = true;
     if (ytWebController == null) {
+      if (kDebugMode) print('[Iframe] Creating new YoutubePlayerController');
       ytWebController = yt_iframe.YoutubePlayerController.fromVideoId(
         videoId: videoId,
         autoPlay: true,
@@ -346,125 +392,35 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
           playsInline: true,
         ),
       );
-      
       ytWebController!.listen((event) {
+        if (kDebugMode) {
+          print('[Iframe Event] PlayerState: ${event.playerState}, Error: ${event.error}, Duration: ${event.metaData.duration}, Position: ${position.value}');
+        }
+        
         if (event.playerState == yt_iframe.PlayerState.playing) {
           isPlaying.value = true;
+          // Ad-skip simulation: if it's playing but the duration is suspiciously short or ad-like, we could skip.
+          // However, youtube_player_iframe doesn't strictly report ads easily. 
         } else if (event.playerState == yt_iframe.PlayerState.paused) {
           isPlaying.value = false;
         } else if (event.playerState == yt_iframe.PlayerState.ended) {
           playNext();
         }
+        
         duration.value = event.metaData.duration;
       });
-      
       Stream.periodic(const Duration(seconds: 1)).listen((_) async {
         if (useWebViewFallback.value && isPlaying.value && ytWebController != null) {
-          final pos = await ytWebController!.currentTime;
-          position.value = Duration(seconds: pos.toInt());
+          try {
+            final pos = await ytWebController!.currentTime;
+            position.value = Duration(seconds: pos.toInt());
+          } catch (_) {}
         }
       });
     } else {
+      if (kDebugMode) print('[Iframe] Loading video in existing controller: $videoId');
       ytWebController!.loadVideoById(videoId: videoId);
     }
-  }
-
-  Future<void> playVideo(Video video, {bool isFromQueue = false}) async {
-    // 0. 현재 재생 중인 곡과 동일한 ID인 경우 로딩 없이 처음부터 재생
-    if (currentVideo.value?.id.value == video.id.value && audioPlayer.audioSource != null) {
-      if (kDebugMode) print('Same video ID detected: Seeking to zero instead of reloading');
-      if (useWebViewFallback.value && ytWebController != null) {
-        ytWebController!.seekTo(seconds: 0.0);
-        ytWebController!.playVideo();
-      } else {
-        await audioPlayer.seek(Duration.zero);
-        audioPlayer.play();
-      }
-      isPlaying.value = true;
-      isLoading.value = false;
-      return;
-    }
-
-    if (kDebugMode) print('playVideo called for ID: ${video.id.value}');
-    
-    // 1. 즉시 UI 상태 초기화 (로딩 표시)
-    _cancelCurrentLoad = false;
-    isLoading.value = true;
-    _startLoadingProgress();
-    isPlaying.value = false;
-    position.value = Duration.zero;
-    duration.value = Duration.zero;
-    currentVideo.value = video;
-
-    // 2. 이전 재생 중지
-    try {
-      await audioPlayer.stop();
-      if (ytWebController != null) ytWebController!.stopVideo();
-    } catch (_) {}
-    useWebViewFallback.value = false;
-
-    // 3. 일반 모드일 경우 대기열 관리
-    if (!isFromQueue) {
-      if (currentVideo.value != null && currentVideo.value != video) {
-        historyStack.add(currentVideo.value!);
-      }
-      queue.clear();
-      isPlaylistMode.value = false;
-      playbackMode.value = '자동 재생';
-      _fetchRelatedAndFillQueue(video);
-    }
-    
-    if (kDebugMode) print('Fetching stream URLs for ${video.id.value}...');
-    final urls = await _ytService.getAudioStreamUrls(video.id.value);
-    if (kDebugMode) print('Found ${urls.length} URLs');
-    
-    if (_cancelCurrentLoad) {
-      isLoading.value = false;
-      _stopLoadingProgress();
-      return;
-    }
-    bool success = false;
-    
-    for (String url in urls) {
-      try {
-        if (kDebugMode) print('Attempting play with headers: $url');
-        await audioPlayer.setAudioSource(AudioSource.uri(
-          Uri.parse(url),
-          headers: {'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 14_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0.3 Mobile/15E148 Safari/604.1'},
-        ));
-        audioPlayer.play();
-        _addToRecentlyPlayed(video);
-        success = true;
-        break; // 성공 시 루프 탈출
-      } catch (e) {
-        if (kDebugMode) print('Playback error with headers: $e');
-        // 시도 2: 헤더 제거 (AVPlayer 자체 처리 유도)
-        try {
-          await audioPlayer.setAudioSource(AudioSource.uri(Uri.parse(url)));
-          audioPlayer.play();
-          _addToRecentlyPlayed(video);
-          success = true;
-          break; // 성공 시 루프 탈출
-        } catch (e2) {
-          if (kDebugMode) print('Playback error without headers: $e2');
-          // 다음 Fallback URL로 넘어감
-        }
-      }
-    }
-
-    if (!success) {
-      if (kDebugMode) {
-        print('Native Stream 시도 실패. WebView Fallback으로 전환합니다.');
-      }
-      // 중요: audioPlayer를 먼저 중지한 후 WebView를 초기화해야 네이티브 리스너가 isPlaying을 덮어쓰지 않음
-      await audioPlayer.stop();
-      _initWebViewFallback(video.id.value);
-      _addToRecentlyPlayed(video);
-      isPlaying.value = true;
-    }
-    
-    _stopLoadingProgress();
-    isLoading.value = false;
   }
 
   void _addToRecentlyPlayed(Video video) {
@@ -481,7 +437,6 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     if (history.length > 10) history = history.sublist(0, 10);
     box.put('recent_played', history);
 
-    // 마지막 재생곡 및 대기열 정보 저장 (앱 재시작 시 복원용)
     box.put('last_played', {
       'id': video.id.value,
       'title': video.title,
@@ -494,186 +449,104 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
       'history': historyStack.map((v) => _videoToMap(v)).toList(),
     });
 
-    // HomeController가 초기화되어 있다면 데이터 갱신
-    if (Get.isRegistered<HomeController>()) {
-      Get.find<HomeController>().loadRecentPlayed();
-    }
+    if (Get.isRegistered<HomeController>()) Get.find<HomeController>().loadRecentPlayed();
   }
 
   Map _videoToMap(Video v) {
-    return {
-      'id': v.id.value,
-      'title': v.title,
-      'author': v.author,
-    };
-  }  
+    return {'id': v.id.value, 'title': v.title, 'author': v.author};
+  }
 
-  /// 플레이리스트 모드로 곡 목록을 재생합니다.
   Future<void> playPlaylist(String playlistName, List<Map> songs, {int initialIndex = 0}) async {
     if (songs.isEmpty || initialIndex < 0 || initialIndex >= songs.length) return;
-
-    if (kDebugMode) print('Starting playPlaylist: $playlistName with ${songs.length} songs');
+    if (kDebugMode) print('[PlayerController] playPlaylist requested: $playlistName');
 
     isPlaylistMode.value = true;
     playbackMode.value = playlistName;
     historyStack.clear();
     queue.clear();
 
-    // 1. 전체 리스트를 history와 queue로 분배
     List<Video> playlistVideos = songs.map((s) => Video(
       VideoId(s['id'].toString()),
       s['title']?.toString() ?? 'Unknown Title',
       s['author']?.toString() ?? 'Unknown Author',
       ChannelId('UC0000000000000000000000'),
-      DateTime.now(), // uploadDate
-      DateTime.now().toString(), // uploadDateRaw
-      DateTime.now(), // publishDate
-      '', // description
-      null, // duration
-      ThumbnailSet(s['id'].toString()), // thumbnails
-      const [], // keywords
-      Engagement(0, 0, 0), // engagement
-      false, // isLive
+      DateTime.now(),
+      DateTime.now().toString(),
+      DateTime.now(),
+      '',
+      null,
+      ThumbnailSet(s['id'].toString()),
+      const [],
+      Engagement(0, 0, 0),
+      false,
     )).toList();
 
-    for (int i = 0; i < initialIndex; i++) {
-      historyStack.add(playlistVideos[i]);
-    }
-    for (int i = initialIndex + 1; i < playlistVideos.length; i++) {
-      queue.add(playlistVideos[i]);
-    }
+    for (int i = 0; i < initialIndex; i++) historyStack.add(playlistVideos[i]);
+    for (int i = initialIndex + 1; i < playlistVideos.length; i++) queue.add(playlistVideos[i]);
 
-    // 2. 셔플 모드라면 대기열 셔플
-    if (isShuffle.value) {
-      queue.shuffle();
-    }
-
-    // 3. 선택된 곡 재생
-    if (kDebugMode) print('Playing initial song: ${playlistVideos[initialIndex].title}');
+    if (isShuffle.value) queue.shuffle();
     await playVideo(playlistVideos[initialIndex], isFromQueue: true);
   }
 
   void addVideoToPlaylist(Video video, dynamic playlistKey) {
-    if (kDebugMode) print('Attempting to add video ${video.id.value} to playlist $playlistKey');
     var box = Hive.box('playlists');
     var data = box.get(playlistKey);
     if (data == null) return;
-    
     var p = Map<String, dynamic>.from(data);
     List songs = List.from(p['songs'] ?? []);
-    
     if (songs.length >= 100) {
-      Get.rawSnackbar(message: '재생목록 당 최대 100곡까지만 등록 가능합니다.');
+      Get.rawSnackbar(message: '최대 100곡까지 등록 가능합니다.');
       return;
     }
-    
-    songs.add({
-      'id': video.id.value,
-      'title': video.title,
-      'author': video.author,
-    });
-    
+    songs.add({'id': video.id.value, 'title': video.title, 'author': video.author});
     p['songs'] = songs;
     box.put(playlistKey, p);
-    
-    if (kDebugMode) print('Successfully added to playlist. Showing custom snackbar.');
-    
-    Get.rawSnackbar(
-      title: '추가 완료',
-      message: '${p['name']} 목록에 추가되었습니다.',
-      snackPosition: SnackPosition.TOP,
-      backgroundColor: const Color(0xFF1DB954),
-      margin: const EdgeInsets.all(16),
-      borderRadius: 30,
-      duration: const Duration(seconds: 2),
-    );
+    Get.rawSnackbar(title: '추가 완료', message: '${p['name']} 목록에 추가되었습니다.', backgroundColor: const Color(0xFF1DB954));
   }
 
   void toggleShuffle() {
     isShuffle.value = !isShuffle.value;
-    if (isShuffle.value && queue.isNotEmpty) {
-      queue.shuffle();
-    }
-    _saveCurrentState(); // 상태 저장 강제 호출
-    Get.snackbar(
-      '셔플', 
-      isShuffle.value ? '셔플 모드가 켜졌습니다.' : '셔플 모드가 꺼졌습니다.',
-      snackPosition: SnackPosition.TOP,
-      backgroundColor: const Color(0xFF1DB954).withOpacity(0.8),
-      colorText: Colors.white,
-      duration: const Duration(seconds: 1),
-    );
+    if (isShuffle.value && queue.isNotEmpty) queue.shuffle();
+    _saveCurrentState();
   }
 
   void toggleRepeat() {
     repeatMode.value = (repeatMode.value + 1) % 3;
-    
-    // 네이티브 플레이어 루프 모드 설정 (데이터 재로딩 방지)
-    if (repeatMode.value == 1) {
-      audioPlayer.setLoopMode(LoopMode.one);
-    } else {
-      audioPlayer.setLoopMode(LoopMode.off);
-    }
-
     _saveCurrentState();
-    String msg = '';
-    if (repeatMode.value == 0) msg = '반복 재생 안 함';
-    if (repeatMode.value == 1) msg = '한 곡 반복 중';
-    if (repeatMode.value == 2) msg = '전체 반복 중';
-
-    Get.snackbar(
-      '반복 재생', 
-      msg,
-      snackPosition: SnackPosition.TOP,
-      backgroundColor: const Color(0xFF1DB954).withOpacity(0.8),
-      colorText: Colors.white,
-      duration: const Duration(seconds: 1),
-    );
   }
 
   void _saveCurrentState() {
-    if (currentVideo.value != null) {
-      _addToRecentlyPlayed(currentVideo.value!);
-    }
+    if (currentVideo.value != null) _addToRecentlyPlayed(currentVideo.value!);
   }
 
   void togglePlay() {
     if (isLoading.value) {
-      _cancelCurrentLoad = true;
       isLoading.value = false;
       _stopLoadingProgress();
-      try {
-        audioPlayer.stop();
-        if (ytWebController != null) ytWebController!.stopVideo();
-      } catch (_) {}
+      audioPlayer.stop();
+      if (ytWebController != null) ytWebController!.stopVideo();
       return;
     }
-
     if (useWebViewFallback.value && ytWebController != null) {
-      if (isPlaying.value) {
-        ytWebController!.pauseVideo();
-      } else {
-        ytWebController!.playVideo();
-      }
+      if (isPlaying.value) ytWebController!.pauseVideo(); else ytWebController!.playVideo();
+      return;
+    }
+    
+    if (audioPlayer.audioSource == null && currentVideo.value != null) {
+      playVideo(currentVideo.value!);
       return;
     }
 
     if (audioPlayer.playing) {
       audioPlayer.pause();
     } else {
-      // 복원된 곡이라 소스가 없는 경우, playVideo를 통해 소스 로드 후 재생
-      if (audioPlayer.audioSource == null && currentVideo.value != null) {
-        playVideo(currentVideo.value!, isFromQueue: true);
-      } else {
-        audioPlayer.play();
-      }
+      audioPlayer.play();
     }
   }
 
   @override
   void onClose() {
     WidgetsBinding.instance.removeObserver(this);
-    audioPlayer.dispose();
     _ytService.dispose();
     super.onClose();
   }
@@ -681,40 +554,27 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
 
 extension VideoTitleParsing on Video {
   String get parsedTitle {
-    String raw = title;
-    raw = raw.replaceAll(RegExp(r'(\[.*?\]|\(.*?\)|【.*?】|MV|Official|Video|Audio|Lyrics|가사|Music)', caseSensitive: false), '').trim();
-    
+    String raw = title.replaceAll(RegExp(r'(\[.*?\]|\(.*?\)|【.*?】|MV|Official|Video|Audio|Lyrics|가사|Music)', caseSensitive: false), '').trim();
     if (raw.isEmpty) return title;
-    
-    if (raw.contains(RegExp(r'\s-\s'))) {
-      return raw;
-    } else if (raw.contains('-')) {
+    if (raw.contains(RegExp(r'\s-\s'))) return raw;
+    if (raw.contains('-')) {
       var parts = raw.split('-');
       return '${parts[0].trim()} - ${parts.sublist(1).join('-').trim()}';
     }
-    
     String auth = author.replaceAll(RegExp(r'(- Topic|Topic|VEVO|Official)', caseSensitive: false), '').trim();
     if (auth.isEmpty || raw.toLowerCase().contains(auth.toLowerCase())) return raw;
     return '$auth - $raw';
   }
-
   String get parsedArtist {
     String pt = parsedTitle;
     if (pt == title || pt.isEmpty) return author;
-    if (pt.contains('-')) {
-      var artist = pt.split('-')[0].trim();
-      return artist.isEmpty ? author : artist;
-    }
+    if (pt.contains('-')) return pt.split('-')[0].trim();
     return author.replaceAll(RegExp(r'(- Topic|Topic|VEVO|Official)', caseSensitive: false), '').trim();
   }
-
   String get parsedSongName {
     String pt = parsedTitle;
     if (pt == title || pt.isEmpty) return title;
-    if (pt.contains('-')) {
-      var song = pt.split('-').sublist(1).join('-').trim();
-      return song.isEmpty ? title : song;
-    }
+    if (pt.contains('-')) return pt.split('-').sublist(1).join('-').trim();
     return pt;
   }
 }
