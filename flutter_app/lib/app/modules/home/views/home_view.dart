@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
+import 'package:youtube_explode_dart/youtube_explode_dart.dart';
 import 'package:youtube_player_iframe/youtube_player_iframe.dart';
 import '../controllers/home_controller.dart';
 import '../../player/controllers/player_controller.dart';
@@ -76,7 +77,7 @@ class HomeView extends StatelessWidget {
               left: 16,
               right: 16,
               child: playerController.currentVideo.value != null 
-                ? _buildMiniPlayer() 
+                ? _buildMiniPlayer(context) 
                 : _buildSkeletonMiniPlayer(),
             )
           ),
@@ -342,7 +343,7 @@ class HomeView extends StatelessWidget {
     );
   }
 
-  Widget _buildMiniPlayer() {
+  Widget _buildMiniPlayer(BuildContext context) {
     final video = playerController.currentVideo.value!;
 
     return GestureDetector(
@@ -441,6 +442,10 @@ class HomeView extends StatelessWidget {
                     onPressed: playerController.togglePlay,
                   )
                 ),
+                IconButton(
+                  icon: const Icon(Icons.queue_music, color: Colors.white70, size: 22),
+                  onPressed: () => _showQueueBottomSheet(context),
+                ),
                 IconButton(icon: const Icon(Icons.skip_next, color: Colors.white), onPressed: playerController.playNext),
                 const SizedBox(width: 8),
               ],
@@ -448,6 +453,198 @@ class HomeView extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  void _showQueueBottomSheet(BuildContext context) {
+    Get.bottomSheet(
+      Container(
+        height: MediaQuery.of(context).size.height * 0.7,
+        decoration: const BoxDecoration(
+          color: Color(0xFF1A1A1A),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          children: [
+            // 핸들
+            Container(
+              width: 40,
+              height: 4,
+              margin: const EdgeInsets.only(top: 12, bottom: 8),
+              decoration: BoxDecoration(color: Colors.grey, borderRadius: BorderRadius.circular(2)),
+            ),
+            // 헤더
+            Obx(() => Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.queue_music,
+                    color: playerController.isPlaylistMode.value ? const Color(0xFF1DB954) : Colors.white70,
+                  ),
+                  const SizedBox(width: 8),
+                  Text(
+                    playerController.playbackMode.value,
+                    style: TextStyle(
+                      color: playerController.isPlaylistMode.value ? const Color(0xFF1DB954) : Colors.white,
+                      fontWeight: FontWeight.bold,
+                      fontSize: 16,
+                    ),
+                  ),
+                  const Spacer(),
+                  if (playerController.isPlaylistMode.value)
+                    Text(
+                      '총 ${playerController.historyStack.length + 1 + playerController.queue.length}곡',
+                      style: const TextStyle(color: Colors.grey, fontSize: 12),
+                    )
+                  else
+                    Text(
+                      '${playerController.queue.length}곡 대기 중',
+                      style: const TextStyle(color: Colors.grey, fontSize: 12),
+                    ),
+                ],
+              ),
+            )),
+            const Divider(color: Colors.white12, height: 1),
+            Expanded(
+              child: Obx(() {
+                // 플레이리스트 모드: 전체 목록 표시
+                if (playerController.isPlaylistMode.value) {
+                  final fullList = [
+                    ...playerController.historyStack,
+                    if (playerController.currentVideo.value != null) playerController.currentVideo.value!,
+                    ...playerController.queue,
+                  ];
+                  final currentIndex = playerController.historyStack.length;
+
+                  return ListView.builder(
+                    padding: const EdgeInsets.symmetric(vertical: 8),
+                    itemCount: fullList.length,
+                    itemBuilder: (context, index) {
+                      final v = fullList[index];
+                      final isCurrent = index == currentIndex;
+
+                      return ListTile(
+                        dense: true,
+                        leading: isCurrent
+                            ? const Icon(Icons.graphic_eq, color: Color(0xFF1DB954), size: 20)
+                            : Text('${index + 1}', style: const TextStyle(color: Colors.grey, fontSize: 14)),
+                        title: Text(
+                          v.parsedSongName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: isCurrent ? const Color(0xFF1DB954) : Colors.white,
+                            fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                            fontSize: 14,
+                          ),
+                        ),
+                        subtitle: Text(
+                          v.parsedArtist,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.grey, fontSize: 11),
+                        ),
+                        onTap: () {
+                          if (isCurrent) return;
+                          if (index < currentIndex) {
+                            final jumpCount = currentIndex - index;
+                            for (int i = 0; i < jumpCount; i++) {
+                              playerController.queue.insert(0, playerController.currentVideo.value!);
+                              playerController.currentVideo.value = playerController.historyStack.removeLast();
+                            }
+                          } else {
+                            final jumpCount = index - currentIndex;
+                            for (int i = 0; i < jumpCount; i++) {
+                              playerController.historyStack.add(playerController.currentVideo.value!);
+                              playerController.currentVideo.value = playerController.queue.removeAt(0);
+                            }
+                          }
+                          playerController.playVideo(playerController.currentVideo.value!, isFromQueue: true);
+                          Get.back();
+                        },
+                      );
+                    },
+                  );
+                }
+
+                // 일반 모드: 대기열만 표시
+                if (playerController.queue.isEmpty) {
+                  return const Center(
+                    child: Text('대기열이 비어있습니다.', style: TextStyle(color: Colors.grey)),
+                  );
+                }
+
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (playerController.currentVideo.value != null) ...[
+                      const Padding(
+                        padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                        child: Text('현재 재생 중', style: TextStyle(color: Colors.grey, fontSize: 12, fontWeight: FontWeight.bold)),
+                      ),
+                      ListTile(
+                        dense: true,
+                        leading: const Icon(Icons.graphic_eq, color: Color(0xFF1DB954), size: 24),
+                        title: Text(
+                          playerController.currentVideo.value!.parsedSongName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Color(0xFF1DB954), fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                        subtitle: Text(
+                          playerController.currentVideo.value!.parsedArtist,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.grey, fontSize: 11),
+                        ),
+                      ),
+                    ],
+                    const Padding(
+                      padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+                      child: Text('다음 트랙', style: TextStyle(color: Colors.grey, fontSize: 12, fontWeight: FontWeight.bold)),
+                    ),
+                    Expanded(
+                      child: ListView.builder(
+                        padding: EdgeInsets.zero,
+                        itemCount: playerController.queue.length,
+                        itemBuilder: (context, index) {
+                          final v = playerController.queue[index];
+                          return ListTile(
+                            dense: true,
+                            leading: Text('${index + 1}', style: const TextStyle(color: Colors.grey, fontSize: 14)),
+                            title: Text(
+                              v.parsedSongName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.white, fontSize: 14),
+                            ),
+                            subtitle: Text(
+                              v.parsedArtist,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.grey, fontSize: 11),
+                            ),
+                            onTap: () {
+                              for (int i = 0; i <= index; i++) {
+                                playerController.historyStack.add(playerController.currentVideo.value!);
+                                playerController.currentVideo.value = playerController.queue.removeAt(0);
+                              }
+                              playerController.playVideo(playerController.currentVideo.value!, isFromQueue: true);
+                              Get.back();
+                            },
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                );
+              }),
+            ),
+          ],
+        ),
+      ),
+      isScrollControlled: true,
     );
   }
 }

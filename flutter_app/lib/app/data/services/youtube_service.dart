@@ -84,16 +84,53 @@ class YouTubeService {
 
   Future<List<Video>> getRelatedVideos(Video video) async {
     try {
-      var related = await _yt.videos.getRelatedVideos(video);
-      List<Video> results = related?.toList() ?? [];
+      final videoId = video.id.value;
+      print('[YouTubeService] getRelatedVideos requested for ID: $videoId');
       
-      return results.where((v) {
-        if (v.duration == null) return false;
+      // 1단계: 전달받은 Video 객체로 직접 시도
+      var related = await _yt.videos.getRelatedVideos(video);
+      
+      // 2단계: 결과가 비어있다면, 전체 URL을 사용하여 Video 객체를 새로 가져온 후 재시도
+      // (검색 결과에서 생성된 Video 객체는 연관 영상 데이터를 포함하지 않을 수 있음)
+      if (related == null || related.isEmpty) {
+        print('[YouTubeService] Related list empty or null. Fetching full video metadata via URL...');
+        final fullVideo = await _yt.videos.get('https://youtube.com/watch?v=$videoId');
+        related = await _yt.videos.getRelatedVideos(fullVideo);
+      }
+
+      // 3단계: 여전히 비어있다면, 검색을 통한 Fallback 처리
+      if (related == null || related.isEmpty) {
+        print('[YouTubeService] getRelatedVideos still empty. Falling back to search for similar content...');
+        final query = '${video.title} ${video.author} related'.trim();
+        final searchResults = await _yt.search.search(query);
+        return searchResults.take(10).toList();
+      }
+
+      List<Video> results = related.toList();
+      print('[YouTubeService] Found ${results.length} related videos');
+      
+      // 관련 영상 필터링 (너무 짧거나 너무 긴 영상 제외)
+      final filtered = results.where((v) {
+        if (v.duration == null) return true; // 기간 정보가 없으면 우선 포함
         final s = v.duration!.inSeconds;
-        return s >= 120 && s < 540;
+        return s >= 60 && s < 1200; // 1분 ~ 20분
       }).toList();
+      
+      if (filtered.isEmpty && results.isNotEmpty) {
+        print('[YouTubeService] All related videos filtered out. Returning raw results.');
+        return results.take(10).toList();
+      }
+      
+      return filtered.take(10).toList();
     } catch (e) {
-      return [];
+      print('[YouTubeService] getRelatedVideos Error: $e');
+      // 에러 발생 시 검색으로 최소한의 목록이라도 반환
+      try {
+        final fallbackResults = await _yt.search.search('${video.title} music');
+        return fallbackResults.take(5).toList();
+      } catch (_) {
+        return [];
+      }
     }
   }
 

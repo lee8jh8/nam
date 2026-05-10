@@ -210,35 +210,57 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
 
       // 1. 1순위: YouTube 연관 동영상 (알고리즘 추천)
       try {
+        if (kDebugMode) print('[PlayerController] 1순위 Fetch: YouTube 연관 영상 조회 중...');
         var related = await _ytService.getRelatedVideos(video);
+        if (kDebugMode) print('[PlayerController] 1순위 결과: ${related.length}곡 발견됨');
+        
         if (_currentFetchId != fetchId) return;
         
+        int addedCount = 0;
         for (var v in related) {
           if (_currentFetchId != fetchId) return;
           if (queue.length >= 10) break;
-          if (v.duration == null || excludeIds.contains(v.id.value)) continue;
           
+          final vId = v.id.value;
           final sName = v.parsedSongName.toLowerCase();
-          bool isDuplicate = false;
+          
+          // 상세 로그: 왜 제외되는지 확인
+          if (excludeIds.contains(vId)) {
+            if (kDebugMode) print('   -> [제외] 이미 히스토리/대기열에 있음: ${v.title}');
+            continue;
+          }
+          
+          bool isDuplicateName = false;
           for (var existing in queuedSongNames) {
-            if (existing.contains(sName) || sName.contains(existing)) {
-              isDuplicate = true;
+            // 제목이 너무 비슷하면 중복으로 간주 (단, 검색어 포함 관계가 명확할 때만)
+            if (existing == sName || (sName.length > 3 && existing.contains(sName)) || (existing.length > 3 && sName.contains(existing))) {
+              isDuplicateName = true;
               break;
             }
           }
-          if (isDuplicate) continue;
+          
+          if (isDuplicateName) {
+            if (kDebugMode) print('   -> [제외] 제목 중복 의심: ${v.title}');
+            continue;
+          }
 
           queue.add(v);
-          excludeIds.add(v.id.value);
+          excludeIds.add(vId);
           queuedSongNames.add(sName);
+          addedCount++;
+          if (kDebugMode) print('   + [추가] 대기열에 추가됨: ${v.title}');
         }
-        if (kDebugMode && queue.length > queueIds.length) print('[PlayerController] Queue replenished from Related: ${queue.length} items');
-      } catch (_) {}
+        if (kDebugMode) print('[PlayerController] 1순위 작업 완료: $addedCount곡 대기열 추가됨 (총 ${queue.length}곡)');
+      } catch (e) {
+        if (kDebugMode) print('[PlayerController] 1순위 에러: $e');
+      }
+
 
       if (_currentFetchId != fetchId) return;
 
       // 2. 2순위: LastFM API를 통한 음악적 유사 곡 추천
       if (queue.length < 10) {
+        print('2순위: LastFM API를 통한 음악적 유사 곡 추천');
         try {
           final trackName = video.parsedSongName;
           final artistName = video.parsedArtist;
@@ -303,6 +325,7 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
 
       // 3. 3순위: 영상 파싱 정보(가수, 제목) + 채널명을 조합한 유튜브 검색
       if (queue.length < 10) {
+        print('3순위: 영상 파싱 정보(가수, 제목) + 채널명을 조합한 유튜브 검색');
         try {
           String channelName = video.author.replaceAll(RegExp(r'(- Topic|Topic|VEVO|Official)', caseSensitive: false), '').trim();
           final query = '${video.parsedArtist} ${video.parsedSongName} $channelName music'.trim();
@@ -339,6 +362,7 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
           }
         } catch (_) {}
       }
+      
     } finally {
       if (_currentFetchId == fetchId) {
         _isFetchingQueue = false;
