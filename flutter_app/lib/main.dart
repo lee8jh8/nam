@@ -59,7 +59,7 @@ class MusicApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return GetMaterialApp(
-      title: 'Sonic Flow',
+      title: 'No Ad Music',
       initialBinding: GlobalBinding(),
       themeMode: ThemeMode.dark,
       darkTheme: ThemeData(

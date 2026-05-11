@@ -16,21 +16,21 @@ class SplashView extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             // 앱 로고 아이콘
-            const Icon(
-              Icons.graphic_eq,
-              size: 80,
-              color: Color(0xFF1DB954),
+            Image.asset(
+              'assets/icon/no_ad_music_icon.png',
+              width: 120,
+              height: 120,
             ).animate()
               .scale(duration: 800.ms, curve: Curves.easeOutBack)
               .fadeIn(duration: 800.ms),
             const SizedBox(height: 24),
             // 브랜드 이름
             const Text(
-              'SONIC FLOW',
+              'No Ad Music',
               style: TextStyle(
                 fontSize: 32,
                 fontWeight: FontWeight.bold,
-                letterSpacing: 4.0,
+                letterSpacing: 2.0,
                 color: Colors.white,
               ),
             ).animate()
