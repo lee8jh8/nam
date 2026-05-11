@@ -23,8 +23,10 @@ void main() async {
   // 오디오 포커스 중단 시 대응 (전화, 타 앱 재생 등)
   session.interruptionEventStream.listen((event) {
     if (event.begin) {
+       if (kDebugMode) print('[Main] Audio interruption began');
        audioHandler.pause();
     } else {
+       if (kDebugMode) print('[Main] Audio interruption ended');
        if (event.type == AudioInterruptionType.pause) {
          audioHandler.play();
        }
@@ -39,8 +41,13 @@ void main() async {
       androidNotificationChannelName: 'Music Playback',
       androidNotificationOngoing: true,
       androidStopForegroundOnPause: true,
+      artDownscaleWidth: 300,
+      artDownscaleHeight: 300,
     ),
   );
+
+  // 앱 실행 시 오디오 세션 즉시 활성화 (시스템에 우리 앱이 메인임을 알림)
+  await session.setActive(true);
   
   runApp(const MusicApp());
 }

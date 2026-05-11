@@ -41,25 +41,33 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
   }
 
   @override
-  Future<void> play() => _player.play();
+  Future<void> play() async {
+    if (kDebugMode) print('[AudioHandler] play() requested from system');
+    await _player.play();
+  }
 
   @override
-  Future<void> pause() => _player.pause();
+  Future<void> pause() async {
+    if (kDebugMode) print('[AudioHandler] pause() requested from system');
+    await _player.pause();
+  }
 
   @override
-  Future<void> seek(Duration position) => _player.seek(position);
-
-  @override
-  Future<void> stop() => _player.stop();
+  Future<void> stop() async {
+    if (kDebugMode) print('[AudioHandler] stop() requested from system');
+    await _player.stop();
+  }
 
   @override
   Future<void> skipToNext() async {
+    if (kDebugMode) print('[AudioHandler] skipToNext() requested from system');
     // [중요] fresh URL 보장을 위해 네이티브 playlist seek 대신 Controller를 통한 재로딩 유도
     _nextRequestController.add(null);
   }
 
   @override
   Future<void> skipToPrevious() async {
+    if (kDebugMode) print('[AudioHandler] skipToPrevious() requested from system');
     // [중요] fresh URL 보장을 위해 네이티브 playlist seek 대신 Controller를 통한 재로딩 유도
     _prevRequestController.add(null);
   }

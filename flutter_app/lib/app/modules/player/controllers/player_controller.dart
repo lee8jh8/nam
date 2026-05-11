@@ -463,6 +463,10 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
         success = true;
         _addToRecentlyPlayed(video);
         audioHandler.updateCurrentMediaItem((source as UriAudioSource).tag as MediaItem);
+        
+        // 시스템 세션 활성화 확인 (애플 뮤직 덮어쓰기 방지)
+        final session = await AudioSession.instance;
+        await session.setActive(true);
       } catch (e) {
         if (kDebugMode) print('[PlayerController] Native play attempt failed with headers: $e');
         
@@ -476,6 +480,10 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
             success = true;
             _addToRecentlyPlayed(video);
             audioHandler.updateCurrentMediaItem((source as UriAudioSource).tag as MediaItem);
+
+            // 시스템 세션 활성화 확인 (애플 뮤직 덮어쓰기 방지)
+            final session = await AudioSession.instance;
+            await session.setActive(true);
           } catch (e2) {
             if (kDebugMode) print('[PlayerController] Native play attempt failed without headers: $e2');
             await audioPlayer.stop();
@@ -499,6 +507,10 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
         artUri: video.thumbnails.highResUrl.isNotEmpty ? Uri.parse(video.thumbnails.highResUrl) : null,
       );
       audioHandler.updateCurrentMediaItem(mediaItem);
+      
+      // 시스템 세션 활성화 확인 (애플 뮤직 덮어쓰기 방지)
+      final session = await AudioSession.instance;
+      await session.setActive(true);
     }
 
     _stopLoadingProgress();
