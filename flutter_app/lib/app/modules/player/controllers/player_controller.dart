@@ -41,6 +41,9 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
   String? _currentFetchId; // 비동기 작업 취소를 위한 현재 작업 ID
   Timer? _loadingTimer;
 
+  // [추가] 사용자의 재생 의도를 추적하여 자동 재생 버그 및 중지 안됨 현상 해결
+  bool _userIntendsToPlay = false;
+
   void _startLoadingProgress() {
     loadingPercent.value = 0;
     _loadingTimer?.cancel();
@@ -65,6 +68,24 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     audioPlayer.playerStateStream.listen((state) {
       if (useWebViewFallback.value) return;
       isPlaying.value = state.playing;
+
+      // [수정] 백그라운드 재생 안정화 로직 정밀화
+      // 사용자가 재생 중인 상태(_userIntendsToPlay)이고, 
+      // 플레이어가 '로딩 중'이 아닌데도 'ready' 상태에서 멈춰있을 때만 강제 재생.
+      // state.playing이 false가 되는 시점(사용자가 중지 버튼 누름)에는 이 로직이 타지 않아야 함.
+      if (state.processingState == ProcessingState.ready && 
+          !state.playing && 
+          _userIntendsToPlay && 
+          isLoading.value == false) {
+        if (kDebugMode) print('[PlayerController] Auto-resume triggered. Calling play().');
+        audioPlayer.play();
+      }
+
+      // 곡 재생 완료 시 다음 곡으로 자동 전환
+      if (state.processingState == ProcessingState.completed && _userIntendsToPlay) {
+        if (kDebugMode) print('[PlayerController] Track completed naturally. Requesting next track.');
+        playNext();
+      }
     });
 
     audioPlayer.durationStream.listen((dur) {
@@ -92,7 +113,11 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
         title: video.title,
         artist: video.author,
         duration: video.duration,
-        artUri: video.thumbnails.highResUrl.isNotEmpty ? Uri.parse(video.thumbnails.highResUrl) : null,
+        artUri: video.thumbnails.highResUrl.isNotEmpty 
+            ? Uri.parse(video.thumbnails.highResUrl) 
+            : (video.thumbnails.mediumResUrl.isNotEmpty 
+                ? Uri.parse(video.thumbnails.mediumResUrl) 
+                : null),
       );
 
       if (useHeaders) {
@@ -437,6 +462,26 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     _startLoadingProgress();
     isPlaying.value = false;
     currentVideo.value = video;
+    _userIntendsToPlay = true; 
+
+    // [수정] 위젯 깜빡임 최소화: 로딩 전에 MediaItem을 미리 업데이트하여 
+    // 안드로이드 알림이 사라졌다가 다시 생기는 현상을 방지합니다.
+    final immediateMediaItem = MediaItem(
+      id: video.id.value,
+      album: video.author,
+      title: video.title,
+      artist: video.author,
+      duration: video.duration,
+      artUri: video.thumbnails.highResUrl.isNotEmpty 
+          ? Uri.parse(video.thumbnails.highResUrl) 
+          : (video.thumbnails.mediumResUrl.isNotEmpty 
+              ? Uri.parse(video.thumbnails.mediumResUrl) 
+              : null),
+    );
+    audioHandler.updateCurrentMediaItem(immediateMediaItem);
+
+    final session = await AudioSession.instance;
+    await session.setActive(true);
 
     if (!isFromQueue) {
       if (currentVideo.value != null && currentVideo.value != video) {
@@ -454,10 +499,9 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
       }
     }
 
-    try {
-      await audioPlayer.stop();
-      if (ytWebController != null) ytWebController!.stopVideo();
-    } catch (_) {}
+    // [변경] 바로 stop()을 호출하지 않음. 
+    // 백그라운드에서 오디오가 멈춘 상태로 네트워크 요청을 하면 OS가 앱을 중단(Suspended) 시킴.
+    if (ytWebController != null) ytWebController!.stopVideo();
     useWebViewFallback.value = false;
 
     bool success = false;
@@ -466,27 +510,26 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     if (source != null) {
       try {
         if (kDebugMode) print('[PlayerController] Attempting native play with headers...');
-        await Future.delayed(const Duration(milliseconds: 200));
-        await audioPlayer.setAudioSource(source, initialPosition: Duration.zero);
-        audioPlayer.play();
+        
+        // [수정] stop() 대신 바로 setAudioSource를 호출하여 세션 끊김 방지
+        await audioPlayer.setAudioSource(source, initialPosition: Duration.zero, preload: true);
+        
+        _stopLoadingProgress();
+        isLoading.value = false;
+        
+        // 재생 시작 전 세션 재활성화 확인
+        await session.setActive(true);
+        await audioPlayer.play();
         
         success = true;
         _addToRecentlyPlayed(video);
         audioHandler.updateCurrentMediaItem((source as UriAudioSource).tag as MediaItem);
-        
-        // 시스템 세션 활성화 확인 (애플 뮤직 덮어쓰기 방지)
-        final session = await AudioSession.instance;
-        await session.setActive(true);
       } catch (e) {
         if (kDebugMode) print('[PlayerController] PlayVideo Error: $e');
         
-        // 스트림 주소 가져오기에 완전히 실패한 경우 (YouTubeService에서 던진 에러 포함)
         if (e.toString().contains('STREAM_FETCH_FAILED')) {
-          if (kDebugMode) print('[PlayerController] Stream fetch failed permanently. Skipping to next song...');
-          Get.rawSnackbar(
-            message: '곡 정보를 가져오지 못해 다음 곡으로 넘어갑니다.',
-            duration: const Duration(seconds: 2),
-          );
+          if (kDebugMode) print('[PlayerController] Stream fetch failed permanently. Skipping...');
+          Get.rawSnackbar(message: '곡 정보를 가져오지 못해 다음 곡으로 넘어갑니다.', duration: const Duration(seconds: 2));
           playNext();
           return;
         }
@@ -497,15 +540,18 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
         if (source != null) {
           try {
             if (kDebugMode) print('[PlayerController] Attempting native play without headers...');
-            await audioPlayer.setAudioSource(source, initialPosition: Duration.zero);
-            audioPlayer.play();
+            await audioPlayer.stop();
+            await audioPlayer.setAudioSource(source, initialPosition: Duration.zero, preload: true);
+            
+            _stopLoadingProgress();
+            isLoading.value = false;
+            
+            await audioPlayer.play();
             
             success = true;
             _addToRecentlyPlayed(video);
             audioHandler.updateCurrentMediaItem((source as UriAudioSource).tag as MediaItem);
 
-            // 시스템 세션 활성화 확인 (애플 뮤직 덮어쓰기 방지)
-            final session = await AudioSession.instance;
             await session.setActive(true);
           } catch (e2) {
             if (kDebugMode) print('[PlayerController] Native play attempt failed without headers: $e2');
@@ -527,7 +573,11 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
         title: video.title,
         artist: video.author,
         duration: video.duration,
-        artUri: video.thumbnails.highResUrl.isNotEmpty ? Uri.parse(video.thumbnails.highResUrl) : null,
+        artUri: video.thumbnails.highResUrl.isNotEmpty 
+            ? Uri.parse(video.thumbnails.highResUrl) 
+            : (video.thumbnails.mediumResUrl.isNotEmpty 
+                ? Uri.parse(video.thumbnails.mediumResUrl) 
+                : null),
       );
       audioHandler.updateCurrentMediaItem(mediaItem);
       
@@ -536,8 +586,6 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
       await session.setActive(true);
     }
 
-    _stopLoadingProgress();
-    isLoading.value = false;
   }
 
   void _initWebViewFallback(String videoId) {
@@ -683,31 +731,53 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     _saveCurrentState();
   }
 
+  // [추가] 사용자가 명시적으로 중지 버튼을 눌렀을 때 호출
+  void pauseByUser() {
+    _userIntendsToPlay = false;
+    audioPlayer.pause();
+    if (ytWebController != null) ytWebController!.pauseVideo();
+  }
+
+  // [추가] 사용자가 명시적으로 재생 버튼을 눌렀을 때 호출
+  void resumeByUser() {
+    _userIntendsToPlay = true;
+    audioPlayer.play();
+    if (useWebViewFallback.value && ytWebController != null) {
+      ytWebController!.playVideo();
+    }
+  }
+
   void togglePlay() {
     if (isLoading.value) {
       isLoading.value = false;
       _stopLoadingProgress();
       audioPlayer.stop();
       if (ytWebController != null) ytWebController!.stopVideo();
+      _userIntendsToPlay = false; // 로딩 중 취소 시 재생 의도 철회
       return;
     }
     if (useWebViewFallback.value && ytWebController != null) {
-      if (isPlaying.value) ytWebController!.pauseVideo(); else ytWebController!.playVideo();
+      if (isPlaying.value) {
+        pauseByUser(); // 전용 메서드 사용
+      } else {
+        ytWebController!.playVideo();
+        _userIntendsToPlay = true;
+      }
       return;
     }
-    
+
     if (audioPlayer.audioSource == null && currentVideo.value != null) {
       playVideo(currentVideo.value!);
       return;
     }
 
     if (audioPlayer.playing) {
-      audioPlayer.pause();
+      pauseByUser(); // 전용 메서드 사용
     } else {
       audioPlayer.play();
+      _userIntendsToPlay = true; // 재생 버튼 클릭 시 재생 의도 활성화
     }
   }
-
   void _saveCurrentState() {
     if (currentVideo.value != null) _addToRecentlyPlayed(currentVideo.value!);
   }
