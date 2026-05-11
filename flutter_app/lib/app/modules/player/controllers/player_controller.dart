@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:audio_service/audio_service.dart';
+import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:get/get.dart';
@@ -213,7 +214,8 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
         if (kDebugMode) print('[PlayerController] 1순위 Fetch: YouTube 연관 영상 조회 중...');
         var related = await _ytService.getRelatedVideos(video);
         if (kDebugMode) print('[PlayerController] 1순위 결과: ${related.length}곡 발견됨');
-        
+
+        if (kDebugMode) print('related object: ${related}');
         if (_currentFetchId != fetchId) return;
         
         int addedCount = 0;
@@ -224,15 +226,22 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
           final vId = v.id.value;
           final sName = v.parsedSongName.toLowerCase();
           
-          // 상세 로그: 왜 제외되는지 확인
-          if (excludeIds.contains(vId)) {
+          if (kDebugMode) print('   🔍 검사 중: ${v.title} (Duration: ${v.duration})');
+
+          if (vId == video.id.value || excludeIds.contains(vId)) {
             if (kDebugMode) print('   -> [제외] 이미 히스토리/대기열에 있음: ${v.title}');
+            continue;
+          }
+
+          // YouTubeService에서 이미 2~10분 필터링 및 상세 조회를 완료했으므로
+          // 여기서는 null 체크와 중복 체크만 수행합니다.
+          if (v.duration == null) {
+            if (kDebugMode) print('   -> [제외] 재생 시간 정보 없음: ${v.title}');
             continue;
           }
           
           bool isDuplicateName = false;
           for (var existing in queuedSongNames) {
-            // 제목이 너무 비슷하면 중복으로 간주 (단, 검색어 포함 관계가 명확할 때만)
             if (existing == sName || (sName.length > 3 && existing.contains(sName)) || (existing.length > 3 && sName.contains(existing))) {
               isDuplicateName = true;
               break;
@@ -304,7 +313,8 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
                   final filtered = results.where((v) {
                     if (v.duration == null || excludeIds.contains(v.id.value)) return false;
                     final s = v.duration!.inSeconds;
-                    return s >= 120 && s < 540;
+                    // 2분 이상 10분 미만 필터 적용
+                    return s >= 120 && s < 600;
                   }).toList();
                   
                   if (filtered.isNotEmpty) {
@@ -468,6 +478,19 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
         final session = await AudioSession.instance;
         await session.setActive(true);
       } catch (e) {
+        if (kDebugMode) print('[PlayerController] PlayVideo Error: $e');
+        
+        // 스트림 주소 가져오기에 완전히 실패한 경우 (YouTubeService에서 던진 에러 포함)
+        if (e.toString().contains('STREAM_FETCH_FAILED')) {
+          if (kDebugMode) print('[PlayerController] Stream fetch failed permanently. Skipping to next song...');
+          Get.rawSnackbar(
+            message: '곡 정보를 가져오지 못해 다음 곡으로 넘어갑니다.',
+            duration: const Duration(seconds: 2),
+          );
+          playNext();
+          return;
+        }
+
         if (kDebugMode) print('[PlayerController] Native play attempt failed with headers: $e');
         
         source = await _createAudioSource(video, useHeaders: false);
