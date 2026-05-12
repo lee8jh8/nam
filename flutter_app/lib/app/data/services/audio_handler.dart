@@ -28,13 +28,9 @@ class MyAudioHandler extends BaseAudioHandler with SeekHandler {
       }
     });
 
-    // 3. 곡 완료 시 다음 곡 요청 스트림에 이벤트 전송
+    // 3. 곡 완료 시 다음 곡 자동 전환은 PlayerController에서 처리하므로 중복 방지를 위해 제거.
     _player.processingStateStream.listen((state) {
       if (kDebugMode) print('Native Player State: $state');
-      if (state == ProcessingState.completed) {
-        if (kDebugMode) print('Track completed naturally. Requesting next track.');
-        _nextRequestController.add(null);
-      }
     });
 
     // 4. 인덱스 변경 시 시스템 알림(Lockscreen) 업데이트

@@ -3,6 +3,7 @@ import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:get/get.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -41,8 +42,35 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
   String? _currentFetchId; // 비동기 작업 취소를 위한 현재 작업 ID
   Timer? _loadingTimer;
 
-  // [추가] 사용자의 재생 의도를 추적하여 자동 재생 버그 및 중지 안됨 현상 해결
+  // [추가] 백그라운드 재생 시 네트워크 지연으로 인한 앱 서스펜션 방지
+  AudioSource? _nextPreloadedSource;
+  String? _nextPreloadedVideoId;
+
   bool _userIntendsToPlay = false;
+
+  // [추가] Swift Background Task 연동
+  static const MethodChannel _bgTaskChannel = MethodChannel('com.nam.music/background_task');
+  bool _isBgTaskRunning = false;
+
+  void startSwiftBackgroundTask() async {
+    if (_isBgTaskRunning) return;
+    _isBgTaskRunning = true;
+    try {
+      await _bgTaskChannel.invokeMethod('startBackgroundTask');
+      if (kDebugMode) print('[Background] Started Swift Background Task for transition');
+    } catch (e) {
+      if (kDebugMode) print('[Background] Failed to start background task: $e');
+    }
+  }
+
+  void stopSwiftBackgroundTask() async {
+    if (!_isBgTaskRunning) return;
+    _isBgTaskRunning = false;
+    try {
+      await _bgTaskChannel.invokeMethod('stopBackgroundTask');
+      if (kDebugMode) print('[Background] Stopped Swift Background Task');
+    } catch (e) {}
+  }
 
   void _startLoadingProgress() {
     loadingPercent.value = 0;
@@ -94,6 +122,13 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
 
     audioPlayer.positionStream.listen((pos) {
       if (!useWebViewFallback.value) position.value = pos;
+      
+      // 곡 전환이 임박했을 때(끝나기 5초 전) Swift Background Task를 시작하여
+      // 네이티브에서 다음 곡 로딩(Dart 처리) 시점에 앱이 Suspended 되지 않도록 합니다.
+      final dur = duration.value.inSeconds;
+      if (dur > 0 && dur - pos.inSeconds <= 5) {
+        startSwiftBackgroundTask();
+      }
     });
 
     _restoreLastPlayed();
@@ -137,6 +172,25 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     } catch (e) {
       if (kDebugMode) print('[PlayerController] Error creating audio source: $e');
       return null;
+    }
+  }
+
+  // [추가] 다음 곡을 미리 로드하여 백그라운드/ScreenLock 상태에서 곡이 넘어갈 때 
+  // 네트워크 요청 시간(1~3초) 동안 오디오 세션이 유휴 상태가 되어 iOS에 의해 앱이 일시정지되는 현상을 방지합니다.
+  Future<void> _preloadNextSource() async {
+    if (queue.isNotEmpty) {
+      final nextVid = queue.first;
+      if (_nextPreloadedVideoId != nextVid.id.value) {
+        if (kDebugMode) print('[PlayerController] Preloading next source for seamless background play: ${nextVid.title}');
+        _nextPreloadedSource = await _createAudioSource(nextVid, useHeaders: true);
+        if (_nextPreloadedSource == null) {
+          _nextPreloadedSource = await _createAudioSource(nextVid, useHeaders: false);
+        }
+        _nextPreloadedVideoId = nextVid.id.value;
+      }
+    } else {
+      _nextPreloadedSource = null;
+      _nextPreloadedVideoId = null;
     }
   }
 
@@ -398,12 +452,17 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
         } catch (_) {}
       }
       
+      
     } finally {
       if (_currentFetchId == fetchId) {
         _isFetchingQueue = false;
+        // 큐가 채워졌으므로 다음 곡 프리로드 시작
+        _preloadNextSource();
       }
     }
   }
+
+  String? _currentPlayId;
 
   Future<void> playNext() async {
     if (currentVideo.value == null) return;
@@ -429,7 +488,8 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
       historyStack.clear();
       queue.assignAll(allSongs);
       if (queue.isNotEmpty) {
-        await playVideo(queue.removeAt(0), isFromQueue: true);
+        var nextToPlay = queue.removeAt(0);
+        await playVideo(nextToPlay, isFromQueue: true);
       }
     }
   }
@@ -450,11 +510,18 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
   }
 
   Future<void> playVideo(Video video, {bool isFromQueue = false}) async {
+    final playId = DateTime.now().millisecondsSinceEpoch.toString();
+    _currentPlayId = playId;
+
     if (kDebugMode) print('[PlayerController] playVideo requested for: ${video.id.value}');
     
+    // 재생 전환 시작 시 혹시 모를 네트워크 지연 방지를 위해 백그라운드 태스크 시작
+    startSwiftBackgroundTask();
+
     if (currentVideo.value?.id.value == video.id.value && audioPlayer.audioSource != null && !isFromQueue) {
       await audioPlayer.seek(Duration.zero);
       audioPlayer.play();
+      if (_currentPlayId == playId) stopSwiftBackgroundTask();
       return;
     }
 
@@ -496,8 +563,12 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
       // 대기열에서 곡을 선택했더라도, 남은 개수가 적으면 미리 보충
       if (!isPlaylistMode.value && queue.length < 10) {
         _fetchRelatedAndFillQueue(video);
+      } else {
+        Future.microtask(() => _preloadNextSource());
       }
     }
+
+    if (_currentPlayId != playId) return;
 
     // [변경] 바로 stop()을 호출하지 않음. 
     // 백그라운드에서 오디오가 멈춘 상태로 네트워크 요청을 하면 OS가 앱을 중단(Suspended) 시킴.
@@ -505,7 +576,24 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     useWebViewFallback.value = false;
 
     bool success = false;
-    AudioSource? source = await _createAudioSource(video, useHeaders: true);
+    AudioSource? source;
+
+    // 프리로드된 소스가 있다면 네트워크 요청 없이 즉시 사용
+    if (_nextPreloadedVideoId == video.id.value && _nextPreloadedSource != null) {
+      if (kDebugMode) print('[PlayerController] Using preloaded source for seamless transition!');
+      source = _nextPreloadedSource;
+      _nextPreloadedSource = null;
+      _nextPreloadedVideoId = null;
+      // 다음 곡 준비
+      Future.microtask(() => _preloadNextSource());
+    } else {
+      // 없다면 새로 가져옴
+      source = await _createAudioSource(video, useHeaders: true);
+      if (_currentPlayId != playId) return;
+      if (source == null) source = await _createAudioSource(video, useHeaders: false);
+    }
+
+    if (_currentPlayId != playId) return;
 
     if (source != null) {
       try {
@@ -514,39 +602,44 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
         // [수정] stop() 대신 바로 setAudioSource를 호출하여 세션 끊김 방지
         await audioPlayer.setAudioSource(source, initialPosition: Duration.zero, preload: true);
         
+        if (_currentPlayId != playId) return;
+
         _stopLoadingProgress();
         isLoading.value = false;
         
         // 재생 시작 전 세션 재활성화 확인
         await session.setActive(true);
         await audioPlayer.play();
+        if (_currentPlayId == playId) stopSwiftBackgroundTask();
         
         success = true;
         _addToRecentlyPlayed(video);
         audioHandler.updateCurrentMediaItem((source as UriAudioSource).tag as MediaItem);
       } catch (e) {
-        if (kDebugMode) print('[PlayerController] PlayVideo Error: $e');
-        
         if (e.toString().contains('STREAM_FETCH_FAILED')) {
           if (kDebugMode) print('[PlayerController] Stream fetch failed permanently. Skipping...');
           Get.rawSnackbar(message: '곡 정보를 가져오지 못해 다음 곡으로 넘어갑니다.', duration: const Duration(seconds: 2));
           playNext();
+          // 여기서 stop하지 않고 playNext로 넘어간 후 새 곡에서 처리
           return;
         }
 
-        if (kDebugMode) print('[PlayerController] Native play attempt failed with headers: $e');
+        if (kDebugMode) print('[PlayerController] Native play attempt failed: $e');
         
+        // 헤더를 사용했던 소스라면 헤더 없이 다시 시도
         source = await _createAudioSource(video, useHeaders: false);
+        if (_currentPlayId != playId) return;
+
         if (source != null) {
           try {
             if (kDebugMode) print('[PlayerController] Attempting native play without headers...');
-            await audioPlayer.stop();
             await audioPlayer.setAudioSource(source, initialPosition: Duration.zero, preload: true);
             
             _stopLoadingProgress();
             isLoading.value = false;
             
             await audioPlayer.play();
+            stopSwiftBackgroundTask();
             
             success = true;
             _addToRecentlyPlayed(video);
@@ -584,6 +677,8 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
       // 시스템 세션 활성화 확인 (애플 뮤직 덮어쓰기 방지)
       final session = await AudioSession.instance;
       await session.setActive(true);
+      
+      stopSwiftBackgroundTask();
     }
 
   }
@@ -722,6 +817,7 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     isShuffle.value = !isShuffle.value;
     if (isShuffle.value) {
       queue.shuffle();
+      _preloadNextSource();
     }
     _saveCurrentState();
   }
