@@ -75,7 +75,7 @@ class YouTubeService {
       return searchResults.where((v) {
         if (v.duration == null) return false;
         final s = v.duration!.inSeconds;
-        return s >= 120 && s < 540; // 2분 이상 9분 미만
+        return s >= 90 && s < 600; // 1분 30초 이상 10분 미만
       }).toList();
     } catch (e) {
       return [];
@@ -131,17 +131,12 @@ class YouTubeService {
       final List<Video?> detailedVideos = await Future.wait(detailFutures);
       final List<Video> validVideos = detailedVideos.whereType<Video>().toList();
 
-      // 관련 영상 필터링 (2분 ~ 10분)
+      // 관련 영상 필터링 (1분 30초 ~ 10분)
       final filtered = validVideos.where((v) {
         if (v.duration == null) return false;
         final s = v.duration!.inSeconds;
-        return s >= 120 && s < 600;
+        return s >= 90 && s < 600;
       }).toList();
-      
-      if (filtered.isEmpty && validVideos.isNotEmpty) {
-        if (kDebugMode) print('[YouTubeService] All related videos filtered out. Returning raw detailed results.');
-        return validVideos.take(10).toList();
-      }
       
       return filtered.take(10).toList();
     } catch (e) {

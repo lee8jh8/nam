@@ -55,7 +55,8 @@ class SearchControllerCustom extends GetxController {
         final filtered = _currentSearchList!.where((v) {
           if (v.duration == null) return false;
           final s = v.duration!.inSeconds;
-          return s >= 120 && s < 540;
+          // 1분 30초(90초) 이상, 10분(600초) 미만인 영상만 필터링
+          return s >= 90 && s < 600;
         }).toList();
         searchResults.assignAll(filtered);
       }
@@ -78,7 +79,8 @@ class SearchControllerCustom extends GetxController {
         final filtered = nextResults.where((v) {
           if (v.duration == null) return false;
           final s = v.duration!.inSeconds;
-          return s >= 120 && s < 540;
+          // 1분 30초(90초) 이상, 10분(600초) 미만인 영상만 필터링
+          return s >= 90 && s < 600;
         }).toList();
         searchResults.addAll(filtered);
       }
