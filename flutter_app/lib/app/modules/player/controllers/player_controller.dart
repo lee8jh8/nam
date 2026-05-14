@@ -251,8 +251,11 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     }
   }
 
+  int _fetchIdCounter = 0;
+
   Future<void> _fetchRelatedAndFillQueue(Video video) async {
-    final String fetchId = DateTime.now().millisecondsSinceEpoch.toString();
+    _fetchIdCounter++;
+    final String fetchId = _fetchIdCounter.toString();
     _currentFetchId = fetchId;
     _isFetchingQueue = true;
 
@@ -476,8 +479,11 @@ class PlayerController extends GetxController with WidgetsBindingObserver {
     }
   }
 
+  int _playIdCounter = 0;
+
   Future<void> playVideo(Video video, {bool isFromQueue = false}) async {
-    final playId = DateTime.now().millisecondsSinceEpoch.toString();
+    _playIdCounter++;
+    final playId = _playIdCounter.toString();
     _currentPlayId = playId;
 
     if (kDebugMode) print('[PlayerController] playVideo requested for: ${video.id.value}');
